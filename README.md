@@ -43,7 +43,7 @@ web/
 │   └── client-api.ts         browser-side fetch helpers
 ├── proxy.ts                  per-request CSP nonce (Next 16's Middleware)
 ├── app/manifest.ts, RegisterSW.tsx, public/sw.js   PWA — installable, no offline caching of video
-└── bin/yt-dlp, yt-dlp_linux    fetched by scripts/setup-resolver.sh, not committed
+└── bin/yt-dlp, yt-dlp_linux    fetched by `npm install`'s postinstall, not committed
 ```
 
 The app depends only on the `VideoResolver` interface
@@ -93,8 +93,17 @@ startup (`lib/videos/config.ts`), because they trade off differently:
 | Startup cost | Fast (~1-2s) — runs directly | Slower — self-extracts to a fresh temp dir on **every** invocation |
 | Used when | `python3` is on PATH (local dev, most self-hosted deploys) | `python3` isn't available (Vercel serverless functions aren't guaranteed to have it) |
 
-Neither is committed to the repo; run `scripts/setup-resolver.sh` once to
-fetch both into `web/bin/`.
+Neither is committed to the repo (they're 3-40MB binaries, not source) —
+`npm install` inside `web/` fetches them automatically via a `postinstall`
+script ([`web/scripts/fetch-yt-dlp.sh`](./web/scripts/fetch-yt-dlp.sh)).
+**This matters for deployment, not just local dev**: it's what actually
+gets `yt-dlp_linux` into a Vercel build. A deploy built straight from this
+git repo has no `web/bin/` at all — without the `postinstall` fetch, the
+resolver falls through to a bare `yt-dlp` on PATH, which doesn't exist on
+Vercel, and every resolve fails with `VIDEO_RESOLUTION_FAILED` ("The video
+resolver is unavailable"). `scripts/setup-resolver.sh` at the repo root is
+only for explicitly force-refetching later (e.g. to pick up a yt-dlp
+update) — you don't need to run it up front.
 
 An earlier version of this app used only the standalone binary everywhere,
 which turned out to be a real problem locally: repeated timeouts (from
@@ -112,12 +121,9 @@ Prerequisites: Node.js 20+, `curl`.
 
 ```bash
 git clone <this repo>
-cd XDrop
+cd XDrop/web
 
-./scripts/setup-resolver.sh   # fetches both binaries into web/bin/
-
-cd web
-npm install
+npm install   # also fetches the yt-dlp binaries — see above
 cp .env.example .env.local
 ```
 
@@ -209,7 +215,6 @@ third-party page — see **Known limitations** below.
 ## Deploying to Vercel
 
 ```bash
-./scripts/setup-resolver.sh   # make sure web/bin/yt-dlp_linux exists locally (it's the one Vercel uses)
 vercel --cwd web
 ```
 
@@ -221,11 +226,15 @@ A few things specific to running this on Vercel's serverless platform,
 since it's a meaningfully different environment from a normal persistent
 Node server:
 
-- **The resolver binary ships with the function bundle.** Vercel's build
-  can't see a runtime `spawn(binaryPath)` call, so
-  [`next.config.ts`](./web/next.config.ts)'s `outputFileTracingIncludes`
-  explicitly declares `web/bin/**` for both API routes to make sure
-  `yt-dlp_linux` is actually included in the deployed function.
+- **The resolver binary has to actually reach the deployed function**,
+  which takes two separate steps, both already wired up: `npm install`'s
+  `postinstall` fetches `yt-dlp_linux` into `web/bin/` during Vercel's
+  build (it isn't committed to git — see **How the resolver works**
+  above), and [`next.config.ts`](./web/next.config.ts)'s
+  `outputFileTracingIncludes` then makes sure that file is actually
+  included in the deployed function bundle, since Vercel's build can't see
+  a runtime `spawn(binaryPath)` call on its own. Skip either step and
+  every resolve fails with `VIDEO_RESOLUTION_FAILED`.
 - **No `python3` dependency.** `yt-dlp_linux` is yt-dlp's standalone,
   self-contained build — verified to resolve a real video with `PATH`
   cleared entirely. A Vercel Node function isn't guaranteed to have
