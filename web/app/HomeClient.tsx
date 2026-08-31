@@ -8,7 +8,14 @@ import {
   downloadUrl,
   streamUrl,
 } from "@/lib/client-api";
-import { RecentEntry, loadRecent, addRecent, clearRecent } from "@/lib/recent";
+import {
+  RecentEntry,
+  loadRecent,
+  addRecent,
+  clearRecent,
+  formatRelativeTime,
+  extractHandle,
+} from "@/lib/recent";
 
 type Status = "idle" | "loading" | "error" | "success";
 
@@ -31,6 +38,10 @@ export default function HomeClient() {
 
   const selectedVariant =
     video?.videos.find((v) => v.quality === selectedQuality) ?? video?.videos[0];
+  // videos[] is sorted highest-first by the backend (normalizeYtDlpOutput) —
+  // the first entry is always the best available quality.
+  const bestQuality = video?.videos[0]?.quality;
+  const handle = video ? extractHandle(video.sourceUrl) : null;
 
   useEffect(() => {
     // Deliberately not a lazy useState initializer: this page is
@@ -81,10 +92,12 @@ export default function HomeClient() {
 
   return (
     <div className="page">
-      <header className="header">
-        <h1>XDrop</h1>
-        <p className="subtitle">Paste a public X (Twitter) post URL to fetch its video.</p>
-      </header>
+      <div className="hero">
+        <div className="wordmark">XDrop</div>
+        <h1>Save it. Keep it.</h1>
+        <p className="tagline">Download videos from X in seconds.</p>
+        <p className="supporting">Paste a public X post URL to get started.</p>
+      </div>
 
       <form className="url-form" onSubmit={handleSubmit}>
         <input
@@ -122,7 +135,10 @@ export default function HomeClient() {
                   ) : (
                     <span className="recent-thumb recent-thumb-empty" aria-hidden="true" />
                   )}
-                  <span className="recent-title">{entry.title ?? entry.sourceUrl}</span>
+                  <span className="recent-text">
+                    <span className="recent-title">{entry.title ?? entry.sourceUrl}</span>
+                    <span className="recent-time">{formatRelativeTime(entry.resolvedAt)}</span>
+                  </span>
                 </button>
               </li>
             ))}
@@ -133,7 +149,7 @@ export default function HomeClient() {
       {status === "loading" && (
         <div className="state-box loading" role="status">
           <span className="spinner" aria-hidden="true" />
-          Resolving video…
+          Finding your video…
         </div>
       )}
 
@@ -145,11 +161,6 @@ export default function HomeClient() {
 
       {status === "success" && video && (
         <section className="result">
-          {video.title && <h2 className="video-title">{video.title}</h2>}
-          <div className="meta">
-            {formatDuration(video.duration) && <span>⏱ {formatDuration(video.duration)}</span>}
-          </div>
-
           <div className="preview">
             {selectedVariant ? (
               <video
@@ -170,27 +181,44 @@ export default function HomeClient() {
             )}
           </div>
 
-          <div className="qualities">
-            <h3>Available qualities</h3>
-            <ul className="quality-list">
-              {video.videos.map((variant) => (
-                <li key={variant.quality} className="quality-row">
-                  <button
-                    type="button"
-                    className={
-                      variant.quality === selectedQuality ? "quality-btn selected" : "quality-btn"
-                    }
-                    onClick={() => setSelectedQuality(variant.quality)}
+          <div className="result-body">
+            {video.title && <h2 className="video-title">{video.title}</h2>}
+            <div className="meta">
+              {handle && <span>@{handle}</span>}
+              {handle && formatDuration(video.duration) && <span className="dot">·</span>}
+              {formatDuration(video.duration) && <span>{formatDuration(video.duration)}</span>}
+            </div>
+
+            <div className="qualities">
+              <h3>Available qualities</h3>
+              <ul className="quality-list">
+                {video.videos.map((variant) => (
+                  <li
+                    key={variant.quality}
+                    className={variant.quality === bestQuality ? "quality-row best" : "quality-row"}
                   >
-                    {variant.quality}
-                    {variant.width && variant.height ? ` (${variant.width}×${variant.height})` : ""}
-                  </button>
-                  <a className="download-btn" href={downloadUrl(variant.url, variant.quality)}>
-                    Download
-                  </a>
-                </li>
-              ))}
-            </ul>
+                    <button
+                      type="button"
+                      className={
+                        variant.quality === selectedQuality ? "quality-btn selected" : "quality-btn"
+                      }
+                      onClick={() => setSelectedQuality(variant.quality)}
+                    >
+                      <span>{variant.quality}</span>
+                      {variant.width && variant.height && (
+                        <span className="quality-dims">
+                          {variant.width}×{variant.height}
+                        </span>
+                      )}
+                      {variant.quality === bestQuality && <span className="best-badge">Best</span>}
+                    </button>
+                    <a className="download-btn" href={downloadUrl(variant.url, variant.quality)}>
+                      Download
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </section>
       )}
