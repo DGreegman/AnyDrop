@@ -1,5 +1,5 @@
-import { AppError } from "./videos/errors";
-import { config } from "./videos/config";
+import { AppError } from "./media/errors";
+import { config } from "./media/config";
 
 interface Bucket {
   count: number;

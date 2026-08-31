@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppError, errorResponse } from "@/lib/videos/errors";
+import { AppError, errorResponse } from "@/lib/media/errors";
 
 describe("errorResponse", () => {
   it("maps an AppError to its status and a stable {success,error} body", async () => {

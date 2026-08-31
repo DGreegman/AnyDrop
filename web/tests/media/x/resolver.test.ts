@@ -3,11 +3,11 @@ import {
   classifyResolverFailure,
   normalizeYtDlpOutput,
   YtDlpOutput,
-} from "@/lib/videos/resolver";
-import { AppError } from "@/lib/videos/errors";
+} from "@/lib/media/x/resolver";
+import { AppError } from "@/lib/media/errors";
 
 describe("normalizeYtDlpOutput", () => {
-  it("normalizes progressive mp4 formats into sorted, deduped VideoVariants", () => {
+  it("normalizes progressive mp4 formats into a sorted, deduped ResolvedMedia", () => {
     const raw: YtDlpOutput = {
       title: "A cool video",
       thumbnail: "https://pbs.twimg.com/thumb.jpg",
@@ -57,31 +57,50 @@ describe("normalizeYtDlpOutput", () => {
           width: 720,
           height: 840,
           tbr: 2176,
+          acodec: "mp4a.40.2",
           url: "https://video.twimg.com/720x840.mp4",
         },
       ],
     };
 
-    const result = normalizeYtDlpOutput("https://x.com/user/status/1", raw);
+    const result = normalizeYtDlpOutput("https://x.com/someuser/status/1", raw);
 
+    expect(result.platform).toBe("x");
+    expect(result.sourceUrl).toBe("https://x.com/someuser/status/1");
     expect(result.title).toBe("A cool video");
     expect(result.thumbnail).toBe("https://pbs.twimg.com/thumb.jpg");
     expect(result.duration).toBe(13); // rounded
-    expect(result.videos).toHaveLength(2);
+    expect(result.author).toEqual({ username: "someuser" });
+    expect(result.media).toHaveLength(2);
 
-    expect(result.videos[0]).toMatchObject({
+    // Sorted descending by height; acodec present and not "none" -> hasAudio.
+    expect(result.media[0]).toMatchObject({
       quality: "840p",
       width: 720,
       height: 840,
       bitrate: 2176000,
       format: "mp4",
+      hasAudio: true,
       url: "https://video.twimg.com/720x840.mp4",
     });
-    expect(result.videos[1]).toMatchObject({
+    // The higher-bitrate 372p variant won, not the 500kbps duplicate.
+    // acodec was undefined on this format — treated as "has audio", not
+    // "unknown/false" (same defensive convention as vcodec).
+    expect(result.media[1]).toMatchObject({
       quality: "372p",
       bitrate: 632000,
+      hasAudio: true,
       url: "https://video.twimg.com/320x372.mp4",
     });
+  });
+
+  it("omits `author` when the source URL doesn't carry a recognizable handle", () => {
+    const raw: YtDlpOutput = {
+      formats: [
+        { format_id: "http-500", ext: "mp4", width: 320, height: 372, tbr: 500, url: "https://video.twimg.com/a.mp4" },
+      ],
+    };
+    expect(normalizeYtDlpOutput("not-a-status-url", raw).author).toBeUndefined();
   });
 
   it("throws VIDEO_UNAVAILABLE when there are no progressive video formats", () => {
@@ -92,7 +111,7 @@ describe("normalizeYtDlpOutput", () => {
     };
 
     try {
-      normalizeYtDlpOutput("https://x.com/user/status/1", raw);
+      normalizeYtDlpOutput("https://x.com/someuser/status/1", raw);
       throw new Error("expected to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(AppError);

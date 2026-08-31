@@ -1,7 +1,7 @@
-import { spawn } from "child_process";
-import { config } from "./config";
-import { AppError } from "./errors";
-import { ResolvedVideo, VideoResolver, VideoVariant } from "./types";
+import { runYtDlp } from "../yt-dlp";
+import { normalizeXUrl } from "./validator";
+import { AppError } from "../errors";
+import { MediaAuthor, MediaResolver, MediaVariant, ResolvedMedia } from "../types";
 
 /**
  * yt-dlp's raw JSON is far larger than this — we only type the fields we
@@ -26,70 +26,6 @@ export interface YtDlpOutput {
   duration?: number;
   formats?: YtDlpFormat[];
   extractor?: string;
-}
-
-function runYtDlp(url: string): Promise<{ stdout: string; stderr: string; code: number | null }> {
-  return new Promise((resolve, reject) => {
-    // Argument array only — never build a shell string from user input.
-    const args = [
-      url,
-      "--dump-json",
-      "--no-warnings",
-      "--no-playlist",
-      "--no-progress",
-      "--socket-timeout",
-      "15",
-    ];
-
-    const child = spawn(config.ytDlpPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-
-      // SIGTERM first, not SIGKILL: the standalone (PyInstaller) yt-dlp
-      // binary self-extracts to a ~80MB temp directory on start and only
-      // cleans it up on a normal exit. SIGKILL skips that entirely and
-      // leaks the extraction dir on every single timeout — under any real
-      // disk/memory pressure that compounds into every subsequent
-      // extraction getting slower, causing more timeouts. Escalate to
-      // SIGKILL only if it doesn't exit on its own shortly.
-      child.kill("SIGTERM");
-      const forceKill = setTimeout(() => child.kill("SIGKILL"), 3000);
-      child.once("close", () => clearTimeout(forceKill));
-
-      reject(new AppError("RESOLVER_TIMEOUT", "Timed out while resolving the video."));
-    }, config.resolverTimeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-
-    child.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(
-        new AppError("VIDEO_RESOLUTION_FAILED", "The video resolver is unavailable.", {
-          cause: err,
-        })
-      );
-    });
-
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
-    });
-  });
 }
 
 function mapQualityLabel(format: YtDlpFormat): string {
@@ -125,11 +61,23 @@ export function classifyResolverFailure(stderr: string): AppError {
 }
 
 /**
- * Normalizes yt-dlp's raw --dump-json output into XDrop's ResolvedVideo
- * shape. Exported (pure, no I/O) so resolver-response normalization is
- * covered by tests without shelling out to the real yt-dlp binary.
+ * XDrop only ever calls yt-dlp with a URL already normalized to
+ * https://x.com/<user>/status/<id> (see normalizeXUrl) — the handle is
+ * right there in the URL, so there's no need to trust/parse yt-dlp's own
+ * uploader fields (which the twitter extractor doesn't always populate).
  */
-export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): ResolvedVideo {
+function extractHandle(sourceUrl: string): string | undefined {
+  const match = sourceUrl.match(/^https:\/\/x\.com\/([A-Za-z0-9_]+)\/status\/\d+/);
+  return match ? match[1] : undefined;
+}
+
+/**
+ * Normalizes yt-dlp's raw --dump-json output into XDrop's generic
+ * ResolvedMedia shape. Exported (pure, no I/O) so resolver-response
+ * normalization is covered by tests without shelling out to the real
+ * yt-dlp binary.
+ */
+export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): ResolvedMedia {
   const formats = raw.formats ?? [];
 
   // Only progressive (single-file, directly-fetchable) mp4 variants with an
@@ -161,33 +109,48 @@ export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): Resol
     }
   }
 
-  const videos: VideoVariant[] = Array.from(byQuality.values())
+  const media: MediaVariant[] = Array.from(byQuality.values())
     .map((f) => ({
+      url: f.url as string,
       quality: mapQualityLabel(f),
       width: f.width,
       height: f.height,
       bitrate: f.tbr ? Math.round(f.tbr * 1000) : undefined,
       format: f.ext ?? "mp4",
-      url: f.url as string,
+      // Same defensive treatment as vcodec above: yt-dlp leaves acodec
+      // null/undefined on these progressive formats rather than an
+      // explicit "none" — X doesn't serve silent progressive downloads,
+      // so undefined is treated as "has audio", not "unknown/false".
+      hasAudio: f.acodec !== "none",
     }))
     .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
 
-  if (videos.length === 0) {
-    throw new AppError("VIDEO_UNAVAILABLE", "No downloadable video variants were found.");
+  if (media.length === 0) {
+    throw new AppError("VIDEO_UNAVAILABLE", "No downloadable media variants were found.");
   }
 
+  const handle = extractHandle(sourceUrl);
+  const author: MediaAuthor | undefined = handle ? { username: handle } : undefined;
+
   return {
+    platform: "x",
     sourceUrl,
     thumbnail: raw.thumbnail,
     title: raw.title ?? raw.description?.slice(0, 140),
+    author,
     duration: raw.duration ? Math.round(raw.duration) : undefined,
-    videos,
+    media,
   };
 }
 
-export class XVideoResolver implements VideoResolver {
-  async resolve(url: string): Promise<ResolvedVideo> {
-    const { stdout, stderr, code } = await runYtDlp(url);
+export class XVideoResolver implements MediaResolver {
+  async resolve(url: string): Promise<ResolvedMedia> {
+    // X-specific: confirms this is actually a status URL and normalizes
+    // it to a canonical form — see x/validator.ts. Everything upstream
+    // (platform-detector.ts) only checked the hostname.
+    const normalizedUrl = normalizeXUrl(url);
+
+    const { stdout, stderr, code } = await runYtDlp(normalizedUrl);
 
     if (code !== 0 || !stdout.trim()) {
       throw classifyResolverFailure(stderr);
@@ -218,6 +181,6 @@ export class XVideoResolver implements VideoResolver {
       );
     }
 
-    return normalizeYtDlpOutput(url, raw);
+    return normalizeYtDlpOutput(normalizedUrl, raw);
   }
 }

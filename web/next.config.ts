@@ -46,6 +46,13 @@ const nextConfig: NextConfig = {
     // Next's build-time file tracer can't see a runtime spawn(binaryPath)
     // call, so the bundled yt-dlp binary has to be declared explicitly or
     // it won't ship with these routes' serverless function on Vercel.
+    // Both the generic /api/media/resolve and the legacy /api/videos/resolve
+    // shim end up calling XVideoResolver (which spawns yt-dlp) via
+    // MediaService, so both need it. The download routes don't spawn
+    // anything (they only fetch()), but are included too for symmetry —
+    // cheap, and avoids this silently going stale if that ever changes.
+    "/api/media/resolve": ["./bin/**"],
+    "/api/media/download": ["./bin/**"],
     "/api/videos/resolve": ["./bin/**"],
     "/api/videos/download": ["./bin/**"],
   },

@@ -1,19 +1,26 @@
 # XDrop
 
-XDrop is a small, stateless web app that resolves the public video from an
-X (formerly Twitter) post URL, shows the available qualities, and lets you
-play or download one.
+XDrop is a small, stateless web app that resolves the public video from a
+social post URL, shows the available qualities, and lets you play or
+download one.
 
 ```text
-Paste public X post URL → Fetch Video → Resolve public video media
+Paste public post URL → Fetch Video → Resolve public video media
     → Display available qualities → Play / Download
 ```
 
+**Supported platforms today:** X (Twitter) and Instagram Reels.
+**Recognized but not yet supported:** TikTok, Facebook — pasting one of
+their links gives a clear "not supported yet" error rather than a generic
+failure; there's no resolver behind them yet.
+
 It's an MVP: no accounts, no database, no queues. See
 [`XDrop_MVP_Architecture.md`](./XDrop_MVP_Architecture.md) for the original
-design; the note at the top of that document explains the one deliberate
-deviation from it (Next.js fullstack instead of a separate Express API),
-made so the whole app deploys as a single Vercel project.
+design; the note at the top of that document explains the deliberate
+deviations from it (Next.js fullstack instead of a separate Express API,
+and the later generalization from an X-only "video" domain to a
+multi-platform "media" domain), made so the whole app stays a single
+Vercel project while growing to more platforms.
 
 ## Architecture overview
 
@@ -23,68 +30,139 @@ one deployable unit, one origin, no CORS to configure.
 ```text
 web/
 ├── app/
-│   ├── page.tsx            Server Component (forces dynamic rendering
-│   │                        for the CSP nonce — see proxy.ts below)
-│   ├── HomeClient.tsx       the actual UI: URL input, states, player,
-│   │                        quality list, download buttons
-│   └── api/videos/
-│       ├── resolve/route.ts   POST — validate → resolve → normalize
-│       └── download/route.ts  GET  — SSRF-checked streaming proxy
+│   ├── page.tsx              Server Component (forces dynamic rendering
+│   │                          for the CSP nonce — see proxy.ts below)
+│   ├── HomeClient.tsx         the actual UI: URL input, states, player,
+│   │                          quality list, download buttons
+│   └── api/
+│       ├── media/
+│       │   ├── resolve/route.ts   POST — the platform-agnostic API boundary
+│       │   └── download/route.ts  GET  — SSRF-checked streaming proxy
+│       └── videos/                legacy X-only shape, kept for
+│           ├── resolve/route.ts   backward compatibility — see below
+│           └── download/route.ts
 ├── lib/
-│   ├── videos/
-│   │   ├── types.ts         VideoResolver interface, ResolvedVideo
-│   │   ├── resolver.ts       XVideoResolver (wraps yt-dlp)
-│   │   ├── service.ts        VideoService — orchestration
-│   │   ├── validator.ts      URL validation
-│   │   ├── download.ts       media-URL SSRF allowlist + streaming
-│   │   ├── errors.ts         AppError + {success,error} JSON responses
-│   │   └── config.ts
-│   ├── rate-limit.ts         in-memory per-IP limiter
-│   └── client-api.ts         browser-side fetch helpers
-├── proxy.ts                  per-request CSP nonce (Next 16's Middleware)
+│   ├── media/
+│   │   ├── types.ts           Platform, MediaResolver, ResolvedMedia, MediaVariant
+│   │   ├── platform-detector.ts   hostname → Platform, no network calls
+│   │   ├── resolver-registry.ts   Platform → MediaResolver factory
+│   │   ├── service.ts         MediaService — the orchestration the API calls
+│   │   ├── validator.ts       generic request-body validation
+│   │   ├── download.ts        media-URL SSRF allowlist + streaming (all platforms)
+│   │   ├── errors.ts          AppError + {success,error} JSON responses
+│   │   ├── config.ts          shared config (rate limits, download timeout)
+│   │   ├── yt-dlp.ts          shared yt-dlp subprocess runner (X + Instagram)
+│   │   ├── x/                 X-specific: resolver.ts, validator.ts
+│   │   └── instagram/         Instagram-specific: resolver.ts, validator.ts
+│   ├── rate-limit.ts          in-memory per-IP limiter
+│   ├── client-api.ts          browser-side fetch helpers
+│   └── recent.ts              client-side "recent lookups" (localStorage)
+├── proxy.ts                   per-request CSP nonce (Next 16's Middleware)
 ├── app/manifest.ts, RegisterSW.tsx, public/sw.js   PWA — installable, no offline caching of video
 └── bin/yt-dlp, yt-dlp_linux    fetched by `npm install`'s postinstall, not committed
 ```
 
-The app depends only on the `VideoResolver` interface
-([`lib/videos/types.ts`](./web/lib/videos/types.ts)):
+The app depends only on the `MediaResolver` interface
+([`lib/media/types.ts`](./web/lib/media/types.ts)):
 
 ```typescript
-interface VideoResolver {
-  resolve(url: string): Promise<ResolvedVideo>;
+interface MediaResolver {
+  resolve(url: string): Promise<ResolvedMedia>;
 }
 ```
 
-`XVideoResolver` ([`lib/videos/resolver.ts`](./web/lib/videos/resolver.ts))
-is the only piece that knows yt-dlp exists. Everything above it — service,
-route handlers, frontend — only ever sees `ResolvedVideo` / `VideoVariant`.
-Swapping the resolver implementation later means writing a new class that
-implements `VideoResolver`; nothing else changes.
+`MediaService.resolveMedia(url)` is the only thing the API routes call. It
+doesn't know yt-dlp exists, and it doesn't contain any platform-specific
+logic — it just: validates the URL is well-formed, asks
+`platform-detector.ts` which platform it belongs to (hostname only, no
+network request), asks `resolver-registry.ts` for that platform's
+`MediaResolver`, and returns whatever that resolver produces. Adding a
+platform means writing one new `<platform>/resolver.ts` implementing
+`MediaResolver` and adding one line to the registry — nothing else in the
+app changes.
 
-## How the resolver works
+## Supported platforms
 
-X does not publish a stable public API for post media, so XDrop shells out
-to [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) — the most actively
-maintained open-source extractor for X/Twitter video — as a subprocess:
+### X (Twitter)
 
-1. `XVideoResolver.resolve(url)` spawns a bundled yt-dlp binary with
-   `--dump-json` **using an argument array**
-   (`spawn(path, [url, ...flags])`), never a shell string built from user
-   input.
-2. yt-dlp's `twitter` extractor resolves the post and returns raw JSON
-   describing every available format (HLS variants, audio-only tracks,
-   progressive MP4s, storyboards, etc).
-3. `normalizeYtDlpOutput` filters that down to the **progressive MP4/WebM**
-   formats (the ones playable/downloadable as a single file, no HLS player
-   or client-side muxing needed), dedupes by resolution keeping the
-   highest-bitrate variant per quality, and maps them onto the app's
-   `VideoVariant` shape. Raw yt-dlp fields never reach the API response.
-4. If yt-dlp resolves a link to a *different* site embedded in the tweet
-   (e.g. a tweet that just links a YouTube video), the resolver rejects it —
-   XDrop only serves video actually hosted on X's own CDN.
+`XVideoResolver` ([`lib/media/x/resolver.ts`](./web/lib/media/x/resolver.ts))
+shells out to yt-dlp's `twitter` extractor. See **How resolution works**
+below for the mechanism — it's shared with Instagram.
+
+Accepted URL shapes: `x.com/<user>/status/<id>`,
+`twitter.com/<user>/status/<id>` (and `www.`/`mobile.` host variants),
+normalized to a canonical `https://x.com/<user>/status/<id>` before
+resolving.
+
+### Instagram (Reels only)
+
+`InstagramResolver`
+([`lib/media/instagram/resolver.ts`](./web/lib/media/instagram/resolver.ts))
+shells out to yt-dlp's `Instagram` extractor. Only Reels are supported —
+regular posts (`/p/...`) and IGTV (`/tv/...`) aren't handled yet.
+
+Accepted URL shapes: `instagram.com/reel/<id>`,
+`instagram.com/<username>/reel/<id>` (and `www.` variant), normalized to
+`https://www.instagram.com/reel/<id>/`.
+
+Instagram's yt-dlp output looks nothing like X's, which is why it has its
+own normalization logic rather than sharing X's: a real Reel's
+`--dump-json` (checked against several public Reels before writing any
+code, not assumed) has no single format carrying both real
+width/height/bitrate *and* audio. Instead there's a small set of
+*duplicate* entries — the same URL repeated under different bare-numeric
+`format_id`s — that together represent one playable, audio-carrying
+progressive file with no dimension metadata attached, alongside separate
+DASH video-only and audio-only streams that *do* carry real dimensions.
+XDrop only ever serves single-file, directly-fetchable media (the same
+constraint X's resolver operates under), so it dedupes those progressive
+duplicates down to one variant and reports its quality as `"original"`
+rather than inventing a resolution number by borrowing it from an
+unrelated DASH stream. `author.username`/`author.displayName` come
+straight from yt-dlp's own `channel`/`uploader` fields (Instagram's
+extractor — unlike X's — reliably exposes these); `author.avatar` is
+never populated because yt-dlp doesn't expose one. `duration` is also
+typically absent — verified `null` across every real Reel checked while
+building this.
+
+### Not yet supported: TikTok, Facebook
+
+`platform-detector.ts` already recognizes their hostnames (so pasting a
+TikTok/Facebook link gives a specific, honest "not supported yet" error
+instead of a generic "couldn't resolve this"), but there's no resolver
+registered for either — `resolver-registry.ts` throws a clear
+`UNSUPPORTED_URL` for them on purpose, rather than a fake/stub resolver
+that would silently do nothing useful.
+
+## How resolution works
+
+Neither X nor Instagram publish a stable public API for post media, so
+XDrop shells out to [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) — the
+most actively maintained open-source extractor covering both — as a
+subprocess. This part is shared across every yt-dlp-backed resolver
+([`lib/media/yt-dlp.ts`](./web/lib/media/yt-dlp.ts)); only the
+interpretation of the result is platform-specific:
+
+1. `runYtDlp(url)` spawns a bundled yt-dlp binary with `--dump-json`
+   **using an argument array** (`spawn(path, [url, ...flags])`), never a
+   shell string built from user input, with a timeout that sends
+   `SIGTERM` (then `SIGKILL` after a grace period) if yt-dlp hangs.
+2. yt-dlp's platform-specific extractor (`twitter` or `Instagram`)
+   resolves the post and returns raw JSON describing every available
+   format (HLS/DASH variants, audio-only tracks, progressive files,
+   storyboards, etc).
+3. Each platform's own `normalizeYtDlpOutput` (in `x/resolver.ts` /
+   `instagram/resolver.ts`) filters that down to directly-fetchable,
+   audio-carrying variants and maps them onto the app's generic
+   `ResolvedMedia`/`MediaVariant` shape. Raw yt-dlp fields never reach the
+   API response.
+4. Each resolver also rejects output that didn't actually come from its
+   own platform's extractor — e.g. a tweet that just links a YouTube video
+   gets rejected by `XVideoResolver` rather than silently resolving
+   YouTube content instead.
 
 There are actually **two** bundled binaries, picked automatically at
-startup (`lib/videos/config.ts`), because they trade off differently:
+startup (`lib/media/yt-dlp.ts`), because they trade off differently:
 
 | | `bin/yt-dlp` | `bin/yt-dlp_linux` |
 |---|---|---|
@@ -150,32 +228,42 @@ npm start         # run the production build locally
 npm test          # vitest suite
 ```
 
-Open the printed URL, paste a public X post URL that contains a video,
-click **Fetch Video**.
+Open the printed URL, paste a public X or Instagram Reel URL, click
+**Fetch Video**.
 
 ## API usage
 
-### `POST /api/videos/resolve`
+### `POST /api/media/resolve`
+
+The primary, platform-agnostic endpoint. Works for any supported
+platform — the request shape never changes; the response's `platform`
+field tells you which resolver handled it.
 
 ```bash
-curl -X POST http://localhost:3000/api/videos/resolve \
+curl -X POST http://localhost:3000/api/media/resolve \
   -H "Content-Type: application/json" \
   -d '{"url":"https://x.com/user/status/123456789"}'
+
+curl -X POST http://localhost:3000/api/media/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.instagram.com/reel/abc123/"}'
 ```
 
-Accepts `x.com` and `twitter.com` status URLs. Success:
+Success:
 
 ```json
 {
   "success": true,
   "data": {
+    "platform": "x",
     "sourceUrl": "https://x.com/user/status/123456789",
     "thumbnail": "https://pbs.twimg.com/...",
     "title": "...",
+    "author": { "username": "user" },
     "duration": 32,
-    "videos": [
-      { "quality": "720p", "width": 1280, "height": 720, "bitrate": 1500000, "format": "mp4", "url": "https://video.twimg.com/..." },
-      { "quality": "480p", "width": 854,  "height": 480, "bitrate": 900000,  "format": "mp4", "url": "https://video.twimg.com/..." }
+    "media": [
+      { "url": "https://video.twimg.com/...", "quality": "720p", "width": 1280, "height": 720, "bitrate": 1500000, "format": "mp4", "hasAudio": true },
+      { "url": "https://video.twimg.com/...", "quality": "480p", "width": 854,  "height": 480, "bitrate": 900000,  "format": "mp4", "hasAudio": true }
     ]
   }
 }
@@ -187,30 +275,54 @@ Failure (`400`/`404`/`502`/`504` depending on `error.code`):
 { "success": false, "error": { "code": "VIDEO_NOT_FOUND", "message": "This post does not contain a video." } }
 ```
 
+A TikTok/Facebook URL (recognized, not yet implemented) or a genuinely
+unrecognized domain both come back as `400 UNSUPPORTED_URL`, with a
+message telling you which case it was.
+
 Error codes: `INVALID_URL`, `UNSUPPORTED_URL`, `VIDEO_NOT_FOUND`,
 `VIDEO_UNAVAILABLE`, `VIDEO_RESOLUTION_FAILED`, `RESOLVER_TIMEOUT`,
-`DOWNLOAD_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`.
+`DOWNLOAD_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`. (Named `VIDEO_*` from
+when XDrop was X-only — kept as-is rather than renamed for the sake of it;
+they're still accurate, specific failure conditions regardless of which
+platform a resolver is for.)
 
-### `GET /api/videos/download`
+### `GET /api/media/download`
 
 Streams a previously-resolved media URL back to the browser without
 buffering it fully in memory, forwarding `Range` requests so the player can
 seek.
 
 ```text
-GET /api/videos/download?url=<video.twimg.com media URL>&quality=720p&mode=inline|attachment
+GET /api/media/download?url=<CDN media URL>&quality=720p&mode=inline|attachment
 ```
 
-- `url` **must** be an `https://` URL on `twimg.com` or a subdomain of it —
-  anything else is rejected with `UNSUPPORTED_URL`. This is a narrow,
-  allowlisted proxy for X's own CDN, **not** a general URL fetcher.
+- `url` **must** be an `https://` URL on an allowlisted CDN host —
+  currently `twimg.com` (X) or `fbcdn.net` (Instagram), each added only
+  after checking it against real resolver output, not guessed. Anything
+  else is rejected with `UNSUPPORTED_URL`. This is a narrow, allowlisted
+  proxy for known CDNs, **not** a general URL fetcher.
+- The `Referer` sent upstream is chosen per-host to match (X's CDN
+  enforces a referrer/hotlink check; Instagram's didn't in testing, but a
+  matching one is sent anyway as the more correct default).
 - `mode=attachment` (default) sets `Content-Disposition: attachment` to
   force a save-as download; `mode=inline` is used by the `<video>` preview
   player.
 
-This endpoint exists because `video.twimg.com` enforces a
-referrer/hotlink check that rejects a browser loading it directly from a
-third-party page — see **Known limitations** below.
+This endpoint exists because these CDNs reject a browser loading them
+directly from a third-party page (X's is a hard requirement; see **Known
+limitations**) — see architecture doc §7, Strategy B.
+
+### Legacy: `POST /api/videos/resolve`, `GET /api/videos/download`
+
+Kept working, unchanged, for backward compatibility from when XDrop was
+X-only — the current frontend still calls these. `/api/videos/resolve`
+calls the exact same `MediaService` as `/api/media/resolve` and adapts the
+result back into the old `{ videos: [...] }` shape (no `platform`,
+`author`, or `hasAudio` fields); `/api/videos/download` is a direct
+re-export of the media download handler, since download was already
+platform-agnostic in shape. **New code should use `/api/media/*`
+instead** — the legacy routes exist only so nothing that already depends
+on the old contract breaks.
 
 ## Deploying to Vercel
 
@@ -229,28 +341,29 @@ Node server:
 - **The resolver binary has to actually reach the deployed function**,
   which takes two separate steps, both already wired up: `npm install`'s
   `postinstall` fetches `yt-dlp_linux` into `web/bin/` during Vercel's
-  build (it isn't committed to git — see **How the resolver works**
+  build (it isn't committed to git — see **How resolution works**
   above), and [`next.config.ts`](./web/next.config.ts)'s
   `outputFileTracingIncludes` then makes sure that file is actually
-  included in the deployed function bundle, since Vercel's build can't see
-  a runtime `spawn(binaryPath)` call on its own. Skip either step and
-  every resolve fails with `VIDEO_RESOLUTION_FAILED`.
+  included in the deployed function bundle for every route that resolves
+  media, since Vercel's build can't see a runtime `spawn(binaryPath)` call
+  on its own. Skip either step and every resolve fails with
+  `VIDEO_RESOLUTION_FAILED`.
 - **No `python3` dependency.** `yt-dlp_linux` is yt-dlp's standalone,
-  self-contained build — verified to resolve a real video with `PATH`
-  cleared entirely. A Vercel Node function isn't guaranteed to have
-  `python3` on PATH, so the regular `yt-dlp` (a Python zipapp) would be a
-  much less reliable choice here.
-- **Function duration limits.** Both routes set
+  self-contained build — verified to resolve real X and Instagram content
+  with `PATH` cleared entirely. A Vercel Node function isn't guaranteed to
+  have `python3` on PATH, so the regular `yt-dlp` (a Python zipapp) would
+  be a much less reliable choice here.
+- **Function duration limits.** All four routes set
   `export const maxDuration = 60` (App Router route segment config) —
-  resolving typically takes 3-6s once a function instance is warm — but
-  the *first* invocation on a cold instance is measurably slower (yt-dlp's
-  standalone binary self-extracts on each process spawn; that cost is
-  paid once per warm container, not per request). Vercel's Hobby plan
-  enforces a 10s ceiling regardless of what a route asks for; Pro and
-  above respect the 60s, which comfortably covers a cold start. If you hit
-  `RESOLVER_TIMEOUT` or truncated downloads on Hobby, that's this limit,
-  not a bug — either upgrade the plan or self-host (`npm run build && npm
-  start` behind any Node host) where there's no such ceiling.
+  resolving typically takes a few seconds once a function instance is
+  warm — but the *first* invocation on a cold instance is measurably
+  slower (yt-dlp's standalone binary self-extracts on each process spawn;
+  that cost is paid once per warm container, not per request). Vercel's
+  Hobby plan enforces a 10s ceiling regardless of what a route asks for;
+  Pro and above respect the 60s, which comfortably covers a cold start. If
+  you hit `RESOLVER_TIMEOUT` or truncated downloads on Hobby, that's this
+  limit, not a bug — either upgrade the plan or self-host (`npm run build
+  && npm start` behind any Node host) where there's no such ceiling.
 - **In-memory rate limiting resets per cold start** and isn't shared
   across concurrent instances — a best-effort backstop on serverless, not
   a hard guarantee (see [`lib/rate-limit.ts`](./web/lib/rate-limit.ts)).
@@ -263,29 +376,52 @@ Node server:
 
 ## Known limitations
 
-- **Only public content.** XDrop does not, and will not, attempt to bypass
-  private accounts, login walls, age gates, or DRM. If yt-dlp can't resolve
-  a post without authenticating, XDrop reports `VIDEO_UNAVAILABLE`.
+- **Only public content, on every platform.** XDrop does not, and will
+  not, attempt to bypass private accounts, login walls, age gates, or DRM.
+  If yt-dlp can't resolve a post without authenticating, XDrop reports
+  `VIDEO_UNAVAILABLE`. For Instagram specifically, yt-dlp can't actually
+  distinguish "this post doesn't exist" from "this post exists but
+  requires login" — both produce the same "empty media response" from
+  Instagram's side — so both map to the same honest `VIDEO_UNAVAILABLE`
+  rather than guessing which one it is.
+- **Instagram support is Reels only.** Regular posts (`/p/...`) and IGTV
+  (`/tv/...`) are rejected as unsupported, not attempted.
+- **TikTok and Facebook are recognized, not resolvable.** Pasting one
+  gives a specific "not supported yet" error rather than a generic
+  failure — there's no resolver registered for either.
+- **Instagram media quality is reported as `"original"`, not a resolution
+  number.** Unlike X, Instagram's yt-dlp output doesn't attach real
+  width/height to the one progressive (audio+video) file it actually
+  serves — see **Supported platforms** above for why. XDrop doesn't invent
+  a resolution by borrowing one from an unrelated stream.
 - **Playback/download always go through the backend proxy, not directly to
-  `video.twimg.com`.** X's CDN enforces a referrer check that a third-party
-  page fails, so both the `<video>` preview and the Download button use
-  `GET /api/videos/download` (Strategy B from the architecture doc) rather
-  than linking straight to the resolved media URL (Strategy A).
-- **yt-dlp is an external, frequently-updated dependency.** If X changes
-  something and the bundled yt-dlp release falls behind, resolution can
-  start failing until it's updated (`./scripts/setup-resolver.sh` again) —
-  this is exactly why the `VideoResolver` interface exists.
-- **No persistence.** Nothing is stored; every request re-resolves from
-  scratch. There's no download history, caching, or retry queue.
+  the CDN.** X's CDN enforces a referrer check that a third-party page
+  fails, so both the `<video>` preview and the Download button use
+  `GET /api/media/download` (Strategy B from the architecture doc) rather
+  than linking straight to the resolved media URL (Strategy A). Applied
+  uniformly to Instagram too, for consistency, even though its CDN didn't
+  strictly require it in testing.
+- **yt-dlp is an external, frequently-updated dependency.** If a platform
+  changes something and the bundled yt-dlp release falls behind,
+  resolution for that platform can start failing until it's updated
+  (`./scripts/setup-resolver.sh` again) — this is exactly why the
+  `MediaResolver` interface exists.
+- **No persistence.** Nothing is stored server-side; every request
+  re-resolves from scratch. There's no download history, caching, or
+  retry queue. (The frontend does keep a small "recent lookups" list, but
+  that's `localStorage` only — see [`lib/recent.ts`](./web/lib/recent.ts).)
 - **Vercel Hobby's 10s function timeout** can be tight for a slow
-  resolution or a larger video download — see **Deploying to Vercel**.
-- **Resolution time depends on real network conditions to X**, same as the
-  old yt-dlp CLI always did — a slow/congested connection can push a
-  resolve well past the "typical" few seconds. The app doesn't fetch any
-  other external resource at request time (no Google Fonts, no third-party
-  APIs), specifically so a resolve is the only thing that can be slow.
-- Quality labels are derived from video height (e.g. `720p`); XDrop does
-  not transcode or re-encode — it only re-serves what X already generated.
+  resolution or a larger media download — see **Deploying to Vercel**.
+- **Resolution time depends on real network conditions to the target
+  platform**, same as the yt-dlp CLI always had. The app doesn't fetch any
+  other external resource at request time (no Google Fonts, no
+  third-party APIs), specifically so a resolve is the only thing that can
+  be slow.
+- The frontend is still X-branded ("XDrop") and shows an `@handle` line
+  assuming a `username`-shaped author — this renders fine for Instagram
+  too (it just omits the handle line if absent) but hasn't had a
+  multi-platform UI pass yet; that's deliberately out of scope until more
+  platforms land.
 
 ## Testing
 
@@ -294,10 +430,16 @@ cd web
 npm test
 ```
 
-Covers URL validation (valid/invalid/unsupported), resolver-response
-normalization and error classification (pure functions, no real yt-dlp
-process invoked), `VideoService` orchestration, the shared error-response
-mapping, and the `/api/videos/*` route handlers (success, validation
-errors, resolver failures, and the download SSRF allowlist) called
-directly with a constructed `NextRequest` and a mocked resolver — no
-network calls or running server in the test suite.
+Covers URL validation (valid/invalid/unsupported, generic and per-platform),
+platform detection (all 4 recognized platforms + hostname-spoofing
+attempts + malformed URLs), the resolver registry (X and Instagram resolve
+to real resolvers; TikTok/Facebook fail cleanly), `MediaService`
+orchestration, resolver-response normalization for both X and Instagram
+(pure functions, no real yt-dlp process invoked in the test suite), the
+shared error-response mapping, and every `/api/media/*` and legacy
+`/api/videos/*` route handler (success, validation errors, resolver
+failures, and the download SSRF allowlist — including a check that an
+Instagram CDN host is accepted) — called directly with a constructed
+`NextRequest` and a mocked resolver, no network calls in the suite itself.
+Real yt-dlp resolution against live public X and Instagram content is
+verified manually (see git history / PR notes), not in CI.

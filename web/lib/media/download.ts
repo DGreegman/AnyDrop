@@ -3,16 +3,30 @@ import { AppError } from "./errors";
 
 /**
  * Hosts XDrop is willing to fetch media from and stream back to the
- * browser. This is the whole SSRF defense for the download endpoint: the
- * client supplies a media URL, but it can only ever point at X's own CDN.
- * This is intentionally NOT a general-purpose URL proxy.
+ * browser, and the Referer each expects — this is the whole SSRF defense
+ * for the download endpoint, not a general-purpose URL proxy. Each entry
+ * was verified against real resolver output before being added, not
+ * guessed:
+ *   - twimg.com: X's media CDN (video.twimg.com, pbs.twimg.com, ...).
+ *   - fbcdn.net: Instagram's media CDN (e.g. instagram.fbni1-1.fna.fbcdn.net)
+ *     — confirmed via real Reel resolutions. Note this is a Meta-wide CDN
+ *     domain, so it will very likely also cover Facebook once that's
+ *     implemented, but that isn't tested/assumed here.
+ * Adding a platform means adding its CDN host(s) + referer here too, once
+ * that platform has a resolver and its real media URLs have been checked.
  */
-const ALLOWED_MEDIA_HOSTS_SUFFIX = ".twimg.com";
-const ALLOWED_MEDIA_HOST_EXACT = "twimg.com";
+const ALLOWED_MEDIA_HOSTS: ReadonlyArray<{ suffix: string; referer: string }> = [
+  { suffix: "twimg.com", referer: "https://x.com/" },
+  { suffix: "fbcdn.net", referer: "https://www.instagram.com/" },
+];
+
+function findAllowedHost(hostname: string): { suffix: string; referer: string } | undefined {
+  const h = hostname.toLowerCase();
+  return ALLOWED_MEDIA_HOSTS.find((entry) => h === entry.suffix || h.endsWith(`.${entry.suffix}`));
+}
 
 function isAllowedMediaHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  return h === ALLOWED_MEDIA_HOST_EXACT || h.endsWith(ALLOWED_MEDIA_HOSTS_SUFFIX);
+  return findAllowedHost(hostname) !== undefined;
 }
 
 export function validateMediaUrl(raw: string): URL {
@@ -39,7 +53,7 @@ export function validateMediaUrl(raw: string): URL {
 
 function safeFilename(quality?: string): string {
   const q = (quality ?? "video").replace(/[^a-zA-Z0-9._-]/g, "");
-  return `x-video-${q || "video"}.mp4`;
+  return `xdrop-${q || "video"}.mp4`;
 }
 
 export type StreamDisposition = "attachment" | "inline";
@@ -47,15 +61,20 @@ export type StreamDisposition = "attachment" | "inline";
 /**
  * Fetches the (already-validated) media URL and returns a Response whose
  * body is the upstream's own ReadableStream, piped straight through — the
- * video is never buffered fully in memory. Manually follows a small number
- * of redirects, re-validating the host allowlist on every hop, instead of
- * letting fetch follow a redirect to an arbitrary host.
+ * media is never buffered fully in memory. Manually follows a small
+ * number of redirects, re-validating the host allowlist on every hop,
+ * instead of letting fetch follow a redirect to an arbitrary host.
  *
  * X's CDN enforces referrer/hotlink checks that reject a browser loading
  * video.twimg.com directly from a third-party page, so both playback
  * (`inline`) and saving (`attachment`) go through this proxy — see
  * architecture doc §7, Strategy B. Range requests are forwarded so the
  * <video> element can seek.
+ *
+ * The `Referer` sent upstream is picked per-host from ALLOWED_MEDIA_HOSTS
+ * above (X's CDN requires one matching x.com; Instagram's CDN didn't
+ * enforce one in testing, but a matching instagram.com referer is sent
+ * anyway as the more correct/defensive default).
  */
 export async function buildMediaResponse(
   mediaUrl: URL,
@@ -68,9 +87,12 @@ export async function buildMediaResponse(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.downloadTimeoutMs);
 
+    // Safe fallback only — validateMediaUrl() already guarantees `target`
+    // matches an allowlisted host before this ever runs.
+    const referer = findAllowedHost(target.hostname)?.referer ?? "https://x.com/";
     const headers: Record<string, string> = {
       "User-Agent": "XDrop/1.0",
-      Referer: "https://x.com/",
+      Referer: referer,
     };
     if (options.range) headers.Range = options.range;
 

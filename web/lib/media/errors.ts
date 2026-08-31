@@ -25,6 +25,12 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
  * Application-level error carrying a stable error code and safe-to-expose
  * message. Never put stack traces, file paths, or resolver internals here —
  * that's what `cause` / server-side logging is for.
+ *
+ * The VIDEO_* codes predate the media-platform generalization (XDrop
+ * started X-only) but stay as-is on purpose: they're specific,
+ * well-understood failure conditions from the yt-dlp-backed resolver, and
+ * renaming them would be churn for no behavioral benefit — see
+ * lib/media/x/resolver.ts's classifyResolverFailure.
  */
 export class AppError extends Error {
   readonly code: ErrorCode;
