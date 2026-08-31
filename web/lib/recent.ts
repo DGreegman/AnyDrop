@@ -54,13 +54,3 @@ export function formatRelativeTime(ms: number): string {
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays}d ago`;
 }
-
-/**
- * XDrop only ever normalizes X post URLs to `https://x.com/<user>/status/<id>`
- * (see lib/videos/validator.ts) — the handle is already right there in the
- * URL, so there's no need to ask the backend for an "author" field.
- */
-export function extractHandle(sourceUrl: string): string | null {
-  const match = sourceUrl.match(/^https:\/\/x\.com\/([A-Za-z0-9_]+)\/status\/\d+/);
-  return match ? match[1] : null;
-}

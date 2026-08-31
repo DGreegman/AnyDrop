@@ -2,6 +2,7 @@ import { AppError } from "./errors";
 import { MediaResolver, Platform } from "./types";
 import { XVideoResolver } from "./x/resolver";
 import { InstagramResolver } from "./instagram/resolver";
+import { TikTokResolver } from "./tiktok/resolver";
 
 const PLATFORM_LABELS: Record<Platform, string> = {
   x: "X",
@@ -11,16 +12,17 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 };
 
 /**
- * Platform -> MediaResolver factory. "x" and "instagram" are implemented;
- * platform-detector.ts already recognizes tiktok/facebook URLs too (so
- * the app can tell users "yes, that's a TikTok link" vs "I don't know
- * what that is"), but there's deliberately no resolver registered for
- * them yet — adding one later is exactly one new entry here plus a new
+ * Platform -> MediaResolver factory. "x", "instagram", and "tiktok" are
+ * implemented; platform-detector.ts already recognizes facebook URLs too
+ * (so the app can tell users "yes, that's a Facebook link" vs "I don't
+ * know what that is"), but there's deliberately no resolver registered
+ * for it yet — adding one later is exactly one new entry here plus a new
  * `<platform>/resolver.ts`, no other file needs to change.
  */
 const resolverFactories: Partial<Record<Platform, () => MediaResolver>> = {
   x: () => new XVideoResolver(),
   instagram: () => new InstagramResolver(),
+  tiktok: () => new TikTokResolver(),
 };
 
 // One resolver instance per platform, built lazily on first use, rather

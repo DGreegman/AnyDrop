@@ -1,21 +1,32 @@
 // Client-side API helper. Frontend and API share one origin (Next.js
 // fullstack), so these are always relative fetches — no base URL, no CORS.
 
-export interface VideoVariant {
+export type Platform = "x" | "instagram" | "tiktok" | "facebook";
+
+export interface MediaVariant {
   quality: string;
   width?: number;
   height?: number;
   bitrate?: number;
   format: string;
   url: string;
+  hasAudio: boolean;
 }
 
-export interface ResolvedVideo {
+export interface MediaAuthor {
+  username?: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+export interface ResolvedMedia {
+  platform: Platform;
   sourceUrl: string;
   thumbnail?: string;
   title?: string;
+  author?: MediaAuthor;
   duration?: number;
-  videos: VideoVariant[];
+  media: MediaVariant[];
 }
 
 export interface ApiError {
@@ -31,10 +42,10 @@ export class ApiRequestError extends Error {
   }
 }
 
-export async function resolveVideo(url: string): Promise<ResolvedVideo> {
+export async function resolveVideo(url: string): Promise<ResolvedMedia> {
   let res: Response;
   try {
-    res = await fetch("/api/videos/resolve", {
+    res = await fetch("/api/media/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -61,21 +72,23 @@ export async function resolveVideo(url: string): Promise<ResolvedVideo> {
     throw new ApiRequestError(error);
   }
 
-  return json.data as ResolvedVideo;
+  return json.data as ResolvedMedia;
 }
 
 export function downloadUrl(mediaUrl: string, quality: string): string {
   const params = new URLSearchParams({ url: mediaUrl, quality });
-  return `/api/videos/download?${params.toString()}`;
+  return `/api/media/download?${params.toString()}`;
 }
 
 /**
- * X's CDN rejects a browser loading video.twimg.com directly from a
- * third-party page (referrer/hotlink check), so playback goes through the
- * same backend streaming proxy as downloads, just with an inline
- * Content-Disposition so it plays instead of saving.
+ * Some platforms' CDNs reject a browser loading their media directly from
+ * a third-party page (referrer/hotlink checks — X requires one, verified;
+ * TikTok requires a whole solved bot-challenge cookie a plain <video> tag
+ * can never provide), so playback goes through the same backend streaming
+ * proxy as downloads, just with an inline Content-Disposition so it plays
+ * instead of saving.
  */
 export function streamUrl(mediaUrl: string, quality: string): string {
   const params = new URLSearchParams({ url: mediaUrl, quality, mode: "inline" });
-  return `/api/videos/download?${params.toString()}`;
+  return `/api/media/download?${params.toString()}`;
 }

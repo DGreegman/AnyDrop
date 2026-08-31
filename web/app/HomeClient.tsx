@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   ApiRequestError,
-  ResolvedVideo,
+  ResolvedMedia,
   resolveVideo,
   downloadUrl,
   streamUrl,
@@ -14,7 +14,6 @@ import {
   addRecent,
   clearRecent,
   formatRelativeTime,
-  extractHandle,
 } from "@/lib/recent";
 
 type Status = "idle" | "loading" | "error" | "success";
@@ -32,16 +31,19 @@ export default function HomeClient() {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [video, setVideo] = useState<ResolvedVideo | null>(null);
-  const [selectedQuality, setSelectedQuality] = useState<string | null>(null);
+  const [video, setVideo] = useState<ResolvedMedia | null>(null);
+  // Tracked by url, not the `quality` label string: TikTok can list
+  // several distinct encodes at the same resolution (different bitrates),
+  // so `quality` ("1024p") isn't always unique across media[] the way it
+  // always was for X/Instagram — url always is.
+  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
 
-  const selectedVariant =
-    video?.videos.find((v) => v.quality === selectedQuality) ?? video?.videos[0];
-  // videos[] is sorted highest-first by the backend (normalizeYtDlpOutput) —
-  // the first entry is always the best available quality.
-  const bestQuality = video?.videos[0]?.quality;
-  const handle = video ? extractHandle(video.sourceUrl) : null;
+  const selectedVariant = video?.media.find((v) => v.url === selectedUrl) ?? video?.media[0];
+  // media[] is sorted highest-first by each resolver — the first entry is
+  // always the best available quality.
+  const bestUrl = video?.media[0]?.url;
+  const handle = video?.author?.username;
 
   useEffect(() => {
     // Deliberately not a lazy useState initializer: this page is
@@ -59,12 +61,12 @@ export default function HomeClient() {
     setStatus("loading");
     setErrorMessage(null);
     setVideo(null);
-    setSelectedQuality(null);
+    setSelectedUrl(null);
 
     try {
       const data = await resolveVideo(targetUrl.trim());
       setVideo(data);
-      setSelectedQuality(data.videos[0]?.quality ?? null);
+      setSelectedUrl(data.media[0]?.url ?? null);
       setStatus("success");
       setRecent(addRecent({ sourceUrl: data.sourceUrl, title: data.title, thumbnail: data.thumbnail }));
     } catch (err) {
@@ -192,17 +194,15 @@ export default function HomeClient() {
             <div className="qualities">
               <h3>Available qualities</h3>
               <ul className="quality-list">
-                {video.videos.map((variant) => (
+                {video.media.map((variant) => (
                   <li
-                    key={variant.quality}
-                    className={variant.quality === bestQuality ? "quality-row best" : "quality-row"}
+                    key={variant.url}
+                    className={variant.url === bestUrl ? "quality-row best" : "quality-row"}
                   >
                     <button
                       type="button"
-                      className={
-                        variant.quality === selectedQuality ? "quality-btn selected" : "quality-btn"
-                      }
-                      onClick={() => setSelectedQuality(variant.quality)}
+                      className={variant.url === selectedUrl ? "quality-btn selected" : "quality-btn"}
+                      onClick={() => setSelectedUrl(variant.url)}
                     >
                       <span>{variant.quality}</span>
                       {variant.width && variant.height && (
@@ -210,7 +210,7 @@ export default function HomeClient() {
                           {variant.width}×{variant.height}
                         </span>
                       )}
-                      {variant.quality === bestQuality && <span className="best-badge">Best</span>}
+                      {variant.url === bestUrl && <span className="best-badge">Best</span>}
                     </button>
                     <a className="download-btn" href={downloadUrl(variant.url, variant.quality)}>
                       Download

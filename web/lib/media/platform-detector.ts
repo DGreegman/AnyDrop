@@ -23,6 +23,11 @@ const HOST_TO_PLATFORM: Record<string, Platform> = {
   "tiktok.com": "tiktok",
   "www.tiktok.com": "tiktok",
   "m.tiktok.com": "tiktok",
+  // Share-link short domains — verified against two real, live short
+  // links (both redirected correctly and yt-dlp resolved the real video
+  // from each). vm. is used in Europe/Americas, vt. in parts of Asia.
+  "vm.tiktok.com": "tiktok",
+  "vt.tiktok.com": "tiktok",
 
   "facebook.com": "facebook",
   "www.facebook.com": "facebook",

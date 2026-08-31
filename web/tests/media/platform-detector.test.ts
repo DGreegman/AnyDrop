@@ -37,6 +37,11 @@ describe("detectPlatform", () => {
     expectPlatform("https://m.tiktok.com/@user/video/123", "tiktok");
   });
 
+  it("recognizes TikTok's vm./vt. share-link short domains", () => {
+    expectPlatform("https://vm.tiktok.com/ZS4YoeRv2/", "tiktok");
+    expectPlatform("https://vt.tiktok.com/ZSTD5bW7/", "tiktok");
+  });
+
   it("recognizes facebook.com and its www/m/fb.watch variants", () => {
     expectPlatform("https://facebook.com/reel/123", "facebook");
     expectPlatform("https://www.facebook.com/reel/123", "facebook");

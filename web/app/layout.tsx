@@ -16,8 +16,13 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  // suppressHydrationWarning below is scoped to this element only (not
+  // descendants) — it silences the harmless mismatch some browser
+  // extensions cause by injecting attributes onto <html> before React
+  // hydrates (e.g. observed: a `data-qb-installed` attribute). It won't
+  // hide a real hydration bug elsewhere in the tree.
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>
         {children}
         <RegisterSW />

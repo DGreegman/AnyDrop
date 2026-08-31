@@ -30,6 +30,43 @@ describe.each([
     expect(body.error.code).toBe("DOWNLOAD_FAILED");
   });
 
+  it("rejects a tiktok.com URL missing the xdrop_format passthrough param", async () => {
+    // A bare tiktok.com video URL is not itself a fetchable media file —
+    // it must carry the format selector this app's own resolver attaches.
+    const url =
+      `http://localhost${path}?url=` +
+      encodeURIComponent("https://www.tiktok.com/@natgeo/video/7595589117723954487");
+    const res = await handler(new NextRequest(url));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("UNSUPPORTED_URL");
+  });
+
+  it("rejects a tiktok.com passthrough URL with an unsafe format_id", async () => {
+    const url =
+      `http://localhost${path}?url=` +
+      encodeURIComponent(
+        "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=-rm%20-rf"
+      );
+    const res = await handler(new NextRequest(url));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("UNSUPPORTED_URL");
+  });
+
+  it("accepts a well-formed TikTok passthrough URL — validation passes, so a made-up format_id against a real video fails downstream, not as a host/shape rejection", async () => {
+    const url =
+      `http://localhost${path}?url=` +
+      encodeURIComponent(
+        "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=xdrop-test-nonexistent-format"
+      );
+    const res = await handler(new NextRequest(url));
+
+    expect(res.status).not.toBe(400);
+  }, 30000);
+
   it("returns 400 when the url query parameter is missing", async () => {
     const res = await handler(new NextRequest(`http://localhost${path}`));
     expect(res.status).toBe(400);

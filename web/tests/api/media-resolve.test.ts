@@ -80,9 +80,9 @@ describe("POST /api/media/resolve", () => {
     expect(body.error.code).toBe("INVALID_URL");
   });
 
-  it("returns 400 UNSUPPORTED_URL for a recognized-but-unimplemented platform (TikTok)", async () => {
+  it("returns 400 UNSUPPORTED_URL for a recognized-but-unimplemented platform (Facebook)", async () => {
     const res = await mediaResolvePOST(
-      postRequest("/api/media/resolve", { url: "https://www.tiktok.com/@user/video/123" })
+      postRequest("/api/media/resolve", { url: "https://www.facebook.com/reel/123" })
     );
     expect(res.status).toBe(400);
     const body = await res.json();

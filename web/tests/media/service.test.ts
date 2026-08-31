@@ -25,6 +25,24 @@ const sampleInstagramMedia: ResolvedMedia = {
   ],
 };
 
+const sampleTikTokMedia: ResolvedMedia = {
+  platform: "tiktok",
+  sourceUrl: "https://www.tiktok.com/@user/video/123",
+  title: "Sample video",
+  author: { username: "user", displayName: "User" },
+  duration: 30,
+  media: [
+    {
+      quality: "1280p",
+      width: 720,
+      height: 1280,
+      format: "mp4",
+      url: "https://www.tiktok.com/@user/video/123?xdrop_format=h264_720p-0",
+      hasAudio: true,
+    },
+  ],
+};
+
 describe("MediaService.resolveMedia", () => {
   it("detects the platform, resolves via the matching resolver, and returns its result", async () => {
     let receivedPlatform: string | undefined;
@@ -48,6 +66,29 @@ describe("MediaService.resolveMedia", () => {
     const result = await service.resolveMedia("https://www.instagram.com/reel/abc123/");
     expect(receivedPlatform).toBe("instagram");
     expect(result).toEqual(sampleInstagramMedia);
+  });
+
+  it("detects a TikTok URL and dispatches to the TikTok resolver", async () => {
+    let receivedPlatform: string | undefined;
+    const service = new MediaService((platform) => {
+      receivedPlatform = platform;
+      return fakeResolver(async () => sampleTikTokMedia);
+    });
+
+    const result = await service.resolveMedia("https://www.tiktok.com/@user/video/123");
+    expect(receivedPlatform).toBe("tiktok");
+    expect(result).toEqual(sampleTikTokMedia);
+  });
+
+  it("detects a TikTok short link and dispatches to the TikTok resolver", async () => {
+    let receivedPlatform: string | undefined;
+    const service = new MediaService((platform) => {
+      receivedPlatform = platform;
+      return fakeResolver(async () => sampleTikTokMedia);
+    });
+
+    await service.resolveMedia("https://vm.tiktok.com/ZS4YoeRv2/");
+    expect(receivedPlatform).toBe("tiktok");
   });
 
   it("propagates a resolver failure as-is", async () => {

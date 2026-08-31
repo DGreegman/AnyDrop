@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { AppError } from "./errors";
+import { isTikTokPassthroughUrl, buildTikTokMediaResponse } from "./tiktok/download";
 
 /**
  * Hosts XDrop is willing to fetch media from and stream back to the
@@ -41,6 +42,14 @@ export function validateMediaUrl(raw: string): URL {
     throw new AppError("INVALID_URL", "Only https media URLs are supported.");
   }
 
+  // TikTok is a different shape from the others: not a direct CDN file
+  // URL (see tiktok/download.ts for why), but a validated TikTok video
+  // page + format selector that gets re-resolved through yt-dlp. Checked
+  // narrowly — this is not "any tiktok.com URL is allowed".
+  if (isTikTokPassthroughUrl(url)) {
+    return url;
+  }
+
   if (!isAllowedMediaHost(url.hostname)) {
     throw new AppError(
       "UNSUPPORTED_URL",
@@ -51,7 +60,7 @@ export function validateMediaUrl(raw: string): URL {
   return url;
 }
 
-function safeFilename(quality?: string): string {
+export function safeFilename(quality?: string): string {
   const q = (quality ?? "video").replace(/[^a-zA-Z0-9._-]/g, "");
   return `xdrop-${q || "video"}.mp4`;
 }
@@ -80,6 +89,10 @@ export async function buildMediaResponse(
   mediaUrl: URL,
   options: { quality?: string; disposition: StreamDisposition; range?: string | null }
 ): Promise<Response> {
+  if (isTikTokPassthroughUrl(mediaUrl)) {
+    return buildTikTokMediaResponse(mediaUrl, options);
+  }
+
   let target = mediaUrl;
   let upstream: globalThis.Response | undefined;
 
