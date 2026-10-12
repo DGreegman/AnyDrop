@@ -130,6 +130,69 @@ describe("normalizeYtDlpOutput", () => {
   });
 });
 
+describe("normalizeYtDlpOutput — merged quality and carousels", () => {
+  // Shaped after a real post (instagram.com/p/DJQJeVQPnI4): the
+  // progressive file has no dimensions; DASH goes up to 1080p.
+  const post: YtDlpOutput = {
+    extractor: "Instagram",
+    channel: "alpha_expeditions",
+    formats: [
+      { format_id: "dash-1337347094519360a", ext: "m4a", vcodec: "none", acodec: "mp4a.40.5", tbr: 60.7, url: "https://instagram.fbni1-1.fna.fbcdn.net/a.m4a" },
+      { format_id: "1", ext: "mp4", url: "https://instagram.fbni1-2.fna.fbcdn.net/p.mp4" },
+      { format_id: "2", ext: "mp4", url: "https://instagram.fbni1-2.fna.fbcdn.net/p.mp4" },
+      { format_id: "dash-638850075680610v", ext: "mp4", vcodec: "vp09.00.31.08", acodec: "none", width: 720, height: 1280, tbr: 1792.6, url: "https://instagram.fbni1-1.fna.fbcdn.net/720.mp4" },
+      { format_id: "dash-670913965512136v", ext: "mp4", vcodec: "vp09.00.40.08", acodec: "none", width: 1080, height: 1920, tbr: 2426.3, url: "https://instagram.fbni1-1.fna.fbcdn.net/1080.mp4" },
+    ],
+  };
+
+  it("with ffmpeg, offers the 1080p DASH merge ahead of the 'original' progressive file", () => {
+    const result = normalizeYtDlpOutput("https://www.instagram.com/p/DJQJeVQPnI4/", post, { canMerge: true });
+    expect(result.media.map((v) => [v.kind, v.quality])).toEqual([
+      ["merged", "1920p"],
+      ["file", "original"],
+      ["audio", "Audio"],
+    ]);
+    expect(result.media[0].url).toBe(
+      "https://www.instagram.com/p/DJQJeVQPnI4/?xdrop_format=dash-670913965512136v%2Bdash-1337347094519360a"
+    );
+    expect(result.id).toBe("DJQJeVQPnI4");
+  });
+
+  it("prefers H.264 over VP9 at the same height for the merged stream", () => {
+    const withH264: YtDlpOutput = {
+      ...post,
+      formats: [
+        ...post.formats!,
+        { format_id: "dash-h264v", ext: "mp4", vcodec: "avc1.640028", acodec: "none", width: 1080, height: 1920, tbr: 900, url: "https://instagram.fbni1-1.fna.fbcdn.net/h264.mp4" },
+      ],
+    };
+    const result = normalizeYtDlpOutput("https://www.instagram.com/p/DJQJeVQPnI4/", withH264, { canMerge: true });
+    expect(new URL(result.media[0].url).searchParams.get("xdrop_format")).toBe(
+      "dash-h264v+dash-1337347094519360a"
+    );
+  });
+
+  it("splits a carousel into items and keeps silent videos (acodec 'none' on the progressive file)", () => {
+    // Shaped after a real 3-video carousel (instagram.com/p/BQ0eAlwhDrw).
+    const slide = (n: number): YtDlpOutput => ({
+      extractor: "Instagram",
+      playlist_index: n,
+      formats: [
+        { format_id: "0", ext: "mp4", acodec: "none", url: `https://instagram.fbni1-2.fna.fbcdn.net/${n}.mp4` },
+        { format_id: `dash-${n}v`, ext: "mp4", vcodec: "avc1.4d401e", acodec: "none", width: 640, height: 640, url: `https://instagram.fbni1-2.fna.fbcdn.net/${n}-dash.mp4` },
+      ],
+    });
+    const result = normalizeYtDlpOutput("https://www.instagram.com/p/BQ0eAlwhDrw/", [slide(1), slide(2), slide(3)], {
+      canMerge: true,
+    });
+    expect(result.items).toHaveLength(3);
+    for (const item of result.items!) {
+      expect(item.media).toHaveLength(1);
+      expect(item.media[0]).toMatchObject({ kind: "file", hasAudio: false });
+    }
+  });
+});
+
 describe("classifyResolverFailure", () => {
   it("maps Instagram's login-gated/empty-response message to VIDEO_UNAVAILABLE", () => {
     // Verified against real yt-dlp output for a nonexistent Reel — the

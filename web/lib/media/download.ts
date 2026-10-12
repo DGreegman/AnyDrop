@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { AppError } from "./errors";
-import { isTikTokPassthroughUrl, buildTikTokMediaResponse } from "./tiktok/download";
+import { buildPassthroughResponse, isPassthroughUrl, parsePassthroughUrl } from "./passthrough";
 
 /**
  * Hosts XDrop is willing to fetch media from and stream back to the
@@ -9,16 +9,22 @@ import { isTikTokPassthroughUrl, buildTikTokMediaResponse } from "./tiktok/downl
  * was verified against real resolver output before being added, not
  * guessed:
  *   - twimg.com: X's media CDN (video.twimg.com, pbs.twimg.com, ...).
- *   - fbcdn.net: Instagram's media CDN (e.g. instagram.fbni1-1.fna.fbcdn.net)
- *     — confirmed via real Reel resolutions. Note this is a Meta-wide CDN
- *     domain, so it will very likely also cover Facebook once that's
- *     implemented, but that isn't tested/assumed here.
+ *   - fbcdn.net: Meta's media CDN, used by both Instagram
+ *     (instagram.fbni1-1.fna.fbcdn.net) and Facebook
+ *     (video.fbni1-2.fna.fbcdn.net, scontent.*.fbcdn.net) — confirmed via
+ *     real resolutions on both. Neither enforces a Referer (verified: the
+ *     same signed URL returns 206 with no referer, a facebook.com one,
+ *     or an instagram.com one), so one shared entry serves both.
+ *   - tiktokcdn.com: TikTok's *thumbnail* CDN (p16-common-sign.tiktokcdn.com)
+ *     — re-verified fetchable without cookies. TikTok *video* never comes
+ *     through here; it always goes through passthrough.ts instead.
  * Adding a platform means adding its CDN host(s) + referer here too, once
  * that platform has a resolver and its real media URLs have been checked.
  */
 const ALLOWED_MEDIA_HOSTS: ReadonlyArray<{ suffix: string; referer: string }> = [
   { suffix: "twimg.com", referer: "https://x.com/" },
-  { suffix: "fbcdn.net", referer: "https://www.instagram.com/" },
+  { suffix: "fbcdn.net", referer: "https://www.facebook.com/" },
+  { suffix: "tiktokcdn.com", referer: "https://www.tiktok.com/" },
 ];
 
 function findAllowedHost(hostname: string): { suffix: string; referer: string } | undefined {
@@ -42,11 +48,11 @@ export function validateMediaUrl(raw: string): URL {
     throw new AppError("INVALID_URL", "Only https media URLs are supported.");
   }
 
-  // TikTok is a different shape from the others: not a direct CDN file
-  // URL (see tiktok/download.ts for why), but a validated TikTok video
-  // page + format selector that gets re-resolved through yt-dlp. Checked
-  // narrowly — this is not "any tiktok.com URL is allowed".
-  if (isTikTokPassthroughUrl(url)) {
+  // Not a direct CDN file URL but a validated post URL + format selector
+  // that gets re-resolved through yt-dlp (TikTok, merged qualities, MP3 —
+  // see passthrough.ts). Checked narrowly: only the exact canonical shape
+  // XDrop's own resolvers generate, never "any tiktok.com URL".
+  if (isPassthroughUrl(url)) {
     return url;
   }
 
@@ -60,9 +66,23 @@ export function validateMediaUrl(raw: string): URL {
   return url;
 }
 
-export function safeFilename(quality?: string): string {
-  const q = (quality ?? "video").replace(/[^a-zA-Z0-9._-]/g, "");
-  return `xdrop-${q || "video"}.mp4`;
+/**
+ * Builds the download's filename from the client-suggested base name
+ * (e.g. "tiktok-natgeo-7595589117723954487-720p") and the quality label,
+ * reduced to a conservative charset — it ends up inside a quoted
+ * Content-Disposition header, so nothing that could break out of the
+ * quotes or carry a path ever gets through.
+ */
+export function safeFilename(quality?: string, name?: string, ext: "mp4" | "mp3" = "mp4"): string {
+  const clean = (s: string) =>
+    s
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "");
+  const base = name ? clean(name).slice(0, 120) : "";
+  if (base) return `${base}.${ext}`;
+  const q = clean(quality ?? "video");
+  return `xdrop-${q || "video"}.${ext}`;
 }
 
 export type StreamDisposition = "attachment" | "inline";
@@ -87,10 +107,14 @@ export type StreamDisposition = "attachment" | "inline";
  */
 export async function buildMediaResponse(
   mediaUrl: URL,
-  options: { quality?: string; disposition: StreamDisposition; range?: string | null }
+  options: { quality?: string; name?: string; disposition: StreamDisposition; range?: string | null }
 ): Promise<Response> {
-  if (isTikTokPassthroughUrl(mediaUrl)) {
-    return buildTikTokMediaResponse(mediaUrl, options);
+  const passthrough = parsePassthroughUrl(mediaUrl);
+  if (passthrough) {
+    return buildPassthroughResponse(passthrough, {
+      disposition: options.disposition,
+      filename: safeFilename(options.quality, options.name, passthrough.audio ? "mp3" : "mp4"),
+    });
   }
 
   let target = mediaUrl;
@@ -162,7 +186,7 @@ export async function buildMediaResponse(
   headers.set(
     "Content-Disposition",
     options.disposition === "attachment"
-      ? `attachment; filename="${safeFilename(options.quality)}"`
+      ? `attachment; filename="${safeFilename(options.quality, options.name)}"`
       : "inline"
   );
 

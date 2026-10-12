@@ -88,27 +88,104 @@ export function spawnYtDlp(
   args: string[],
   timeoutMs: number = resolverTimeoutMs,
   binaryPath: string = ytDlpPath
-): { child: ChildProcessByStdio<null, Readable, Readable>; timedOut: () => boolean } {
+): {
+  child: ChildProcessByStdio<null, Readable, Readable>;
+  timedOut: () => boolean;
+  /**
+   * Restarts the timeout window. Streaming callers call this on every
+   * chunk, turning the timeout into an *inactivity* timeout — a long
+   * video that's actively downloading is never cut off part-way, only a
+   * stalled one is.
+   */
+  resetTimer: () => void;
+  /** Signals yt-dlp *and* everything it spawned (see killTree below). */
+  kill: (signal?: NodeJS.Signals) => void;
+} {
   // binaryPath is resolved via fs checks (ytDlpPath/ytDlpStandalonePath
   // above), so Turbopack's static analyzer can't prove which file this
   // touches and defaults to tracing (and bundling) the entire project —
   // next.config.ts's outputFileTracingIncludes already declares exactly
   // the files that are actually needed (./bin/**), so that fallback is
   // redundant here.
-  const child = spawn(/* turbopackIgnore: true */ binaryPath, args, {
+  //
+  // detached: yt-dlp gets its own process group, so the whole tree can be
+  // signalled at once. When merging/converting, yt-dlp runs ffmpeg as a
+  // child that writes straight into our pipe — verified: SIGTERM to
+  // yt-dlp alone left that ffmpeg running (blocked on the pipe) after a
+  // cancelled download. Killing the group takes both down.
+  const child = spawn(/* turbopackIgnore: true */ binaryPath, [...args, ...proxyArgs()], {
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
 
-  let didTimeOut = false;
-  const timer = setTimeout(() => {
-    didTimeOut = true;
-    child.kill("SIGTERM");
-    const forceKill = setTimeout(() => child.kill("SIGKILL"), 3000);
-    child.once("close", () => clearTimeout(forceKill));
-  }, timeoutMs);
-  child.once("close", () => clearTimeout(timer));
+  const kill = (signal: NodeJS.Signals = "SIGTERM") => {
+    try {
+      if (child.pid) process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      // Group already gone — fall back to the direct child, ignore if
+      // that's gone too.
+      try {
+        child.kill(signal);
+      } catch {
+        // nothing left to kill
+      }
+    }
+  };
 
-  return { child, timedOut: () => didTimeOut };
+  let didTimeOut = false;
+  let exited = false;
+  const onTimeout = () => {
+    didTimeOut = true;
+    kill("SIGTERM");
+    const forceKill = setTimeout(() => kill("SIGKILL"), 3000);
+    child.once("close", () => clearTimeout(forceKill));
+  };
+  let timer = setTimeout(onTimeout, timeoutMs);
+  child.once("close", () => {
+    exited = true;
+    clearTimeout(timer);
+  });
+
+  const resetTimer = () => {
+    if (exited || didTimeOut) return;
+    clearTimeout(timer);
+    timer = setTimeout(onTimeout, timeoutMs);
+  };
+
+  return { child, timedOut: () => didTimeOut, resetTimer, kill };
+}
+
+/**
+ * Optional outbound proxy for every yt-dlp request (YT_DLP_PROXY, e.g.
+ * "http://user:pass@host:port" or "socks5://host:port"). The platforms
+ * throttle or block anonymous requests from datacenter IP ranges far more
+ * than from residential ones, so routing yt-dlp through a proxy is the
+ * main lever when resolves work locally but fail on a server. Unset by
+ * default — nothing changes unless it's configured.
+ */
+function proxyArgs(): string[] {
+  const proxy = process.env.YT_DLP_PROXY?.trim();
+  return proxy ? ["--proxy", proxy] : [];
+}
+
+/**
+ * Parses yt-dlp's --dump-json stdout: one JSON object per line (several
+ * lines for a multi-video post). Lines that aren't JSON are skipped
+ * rather than failing the whole parse.
+ */
+export function parseYtDlpJsonLines<T>(stdout: string): T[] {
+  const out: T[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      out.push(JSON.parse(trimmed) as T);
+    } catch {
+      // ignore a malformed line — the caller decides if zero is an error
+    }
+  }
+  return out;
 }
 
 export interface YtDlpRunResult {
@@ -126,15 +203,22 @@ export interface YtDlpRunResult {
 export function runYtDlp(
   url: string,
   timeoutMs: number = resolverTimeoutMs,
-  binaryPath: string = ytDlpPath
+  binaryPath: string = ytDlpPath,
+  options: { allowPlaylist?: boolean } = {}
 ): Promise<YtDlpRunResult> {
   return new Promise((resolve, reject) => {
     // Argument array only — never build a shell string from user input.
+    //
+    // allowPlaylist: a post with several videos (an X tweet with up to
+    // four, an Instagram carousel) comes back from yt-dlp as one JSON
+    // object per line, one per video — verified against a real two-video
+    // tweet. --no-playlist would silently keep only the first. Capped so
+    // a pathological post can't fan out into dozens of entries.
     const args = [
       url,
       "--dump-json",
       "--no-warnings",
-      "--no-playlist",
+      ...(options.allowPlaylist ? ["--yes-playlist", "--playlist-items", "1:20"] : ["--no-playlist"]),
       "--no-progress",
       "--socket-timeout",
       "15",

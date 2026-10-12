@@ -1,29 +1,17 @@
-import { runYtDlp, ytDlpStandalonePath } from "../yt-dlp";
-import { normalizeTikTokUrl } from "./validator";
+import { parseYtDlpJsonLines, runYtDlp, ytDlpStandalonePath } from "../yt-dlp";
+import { normalizeTikTokUrl, tiktokVideoId } from "./validator";
 import { AppError } from "../errors";
 import { MediaAuthor, MediaResolver, MediaVariant, ResolvedMedia } from "../types";
+import { XDROP_FORMAT_PARAM, YtDlpFormat, buildPassthroughUrl, maxHeight, onDemandVariants } from "../formats";
+import { assembleResolvedMedia, pickTitle, roundDuration } from "../assemble";
 
-export const XDROP_FORMAT_PARAM = "xdrop_format";
-
-/**
- * yt-dlp's raw JSON is far larger than this — we only type the fields we
- * actually read, so we never leak resolver-internal structure past this file.
- */
-export interface YtDlpFormat {
-  format_id?: string;
-  ext?: string;
-  vcodec?: string;
-  acodec?: string;
-  protocol?: string;
-  width?: number;
-  height?: number;
-  tbr?: number; // total bitrate, kbps
-  url?: string;
-}
+export { XDROP_FORMAT_PARAM };
+export type { YtDlpFormat };
 
 export interface YtDlpOutput {
   title?: string;
   description?: string;
+  thumbnail?: string;
   duration?: number;
   formats?: YtDlpFormat[];
   extractor?: string;
@@ -89,9 +77,17 @@ export function classifyResolverFailure(stderr: string): AppError {
  * the whole request itself). Instead, `url` is the *source* TikTok page
  * URL with a `xdrop_format` query param carrying the exact format_id to
  * request — lib/media/tiktok/download.ts recognizes this shape and
- * re-invokes yt-dlp at download time rather than proxying a dead link.
+ * re-invokes yt-dlp at download time rather than proxying a dead link
+ * (see passthrough.ts).
+ *
+ * TikTok also lists its soundtrack as a ready-made MP3 ("audio"), which
+ * becomes an audio variant with no ffmpeg involved.
  */
-export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): ResolvedMedia {
+export function normalizeYtDlpOutput(
+  sourceUrl: string,
+  raw: YtDlpOutput,
+  options: { canMerge?: boolean } = {}
+): ResolvedMedia {
   const formats = raw.formats ?? [];
 
   const progressive = formats.filter(
@@ -107,43 +103,54 @@ export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): Resol
     }
   }
 
-  const media: MediaVariant[] = Array.from(byQuality.values())
-    .map((f) => {
-      const downloadUrl = new URL(sourceUrl);
-      downloadUrl.searchParams.set(XDROP_FORMAT_PARAM, f.format_id as string);
-      return {
-        url: downloadUrl.toString(),
-        quality: f.height ? `${f.height}p` : (f.format_id as string),
-        width: f.width,
-        height: f.height,
-        bitrate: f.tbr ? Math.round(f.tbr * 1000) : undefined,
-        format: f.ext ?? "mp4",
-        hasAudio: f.acodec !== "none",
-      };
-    })
+  const files: MediaVariant[] = Array.from(byQuality.values())
+    .map((f) => ({
+      url: buildPassthroughUrl(sourceUrl, f.format_id as string),
+      quality: f.height ? `${f.height}p` : (f.format_id as string),
+      width: f.width ?? undefined,
+      height: f.height ?? undefined,
+      bitrate: f.tbr ? Math.round(f.tbr * 1000) : undefined,
+      format: f.ext ?? "mp4",
+      hasAudio: f.acodec !== "none",
+      kind: "file" as const,
+    }))
     .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
 
-  if (media.length === 0) {
-    throw new AppError("VIDEO_UNAVAILABLE", "No downloadable media variants were found.");
-  }
+  const extra = onDemandVariants(sourceUrl, formats, {
+    fileMaxHeight: maxHeight(files),
+    canMerge: options.canMerge,
+  });
 
   const author: MediaAuthor | undefined =
     raw.uploader || raw.channel
       ? { username: raw.uploader || undefined, displayName: raw.channel || undefined }
       : undefined;
 
-  return {
+  return assembleResolvedMedia({
     platform: "tiktok",
     sourceUrl,
-    // No `thumbnail`: TikTok's thumbnail CDN sits behind the same Akamai
-    // protection as the video CDN (verified — 403/503 regardless of
-    // Referer/UA), and re-invoking yt-dlp a second time just to fetch a
-    // still image isn't worth the extra latency for an MVP.
-    title: raw.title ?? raw.description?.slice(0, 140),
+    id: tiktokVideoId(sourceUrl),
     author,
-    duration: raw.duration ? Math.round(raw.duration) : undefined,
-    media,
-  };
+    items: [
+      {
+        index: 1,
+        title: pickTitle(raw),
+        // TikTok's cover images (p16-common-sign.tiktokcdn.com) are
+        // fetchable without the bot-challenge cookie the *video* CDN
+        // needs — re-verified 2026-10: a plain fetch returns 200
+        // image/jpeg with or without a Referer. (An earlier check found
+        // them gated too; if that comes back, the preview just shows no
+        // poster image — nothing else depends on it.)
+        thumbnail: raw.thumbnail,
+        duration: roundDuration(raw.duration),
+        media: [
+          ...extra.filter((v) => v.kind === "merged"),
+          ...files,
+          ...extra.filter((v) => v.kind === "audio"),
+        ],
+      },
+    ],
+  });
 }
 
 export class TikTokResolver implements MediaResolver {
@@ -165,15 +172,11 @@ export class TikTokResolver implements MediaResolver {
       throw classifyResolverFailure(stderr);
     }
 
-    let raw: YtDlpOutput;
-    try {
-      raw = JSON.parse(stdout.trim().split("\n")[0]);
-    } catch (err) {
-      throw new AppError(
-        "VIDEO_RESOLUTION_FAILED",
-        "Unable to parse the resolver response.",
-        { cause: err }
-      );
+    const raw = parseYtDlpJsonLines<YtDlpOutput>(stdout)[0];
+    if (!raw) {
+      throw new AppError("VIDEO_RESOLUTION_FAILED", "Unable to parse the resolver response.", {
+        cause: stdout.slice(0, 500),
+      });
     }
 
     // Mirrors X's/Instagram's same defensive check: only trust output

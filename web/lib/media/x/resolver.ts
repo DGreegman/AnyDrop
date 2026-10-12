@@ -1,24 +1,16 @@
-import { runYtDlp } from "../yt-dlp";
-import { normalizeXUrl } from "./validator";
+import { parseYtDlpJsonLines, runYtDlp } from "../yt-dlp";
+import { normalizeXUrl, xStatusId } from "./validator";
 import { AppError } from "../errors";
-import { MediaAuthor, MediaResolver, MediaVariant, ResolvedMedia } from "../types";
+import { MediaAuthor, MediaItem, MediaResolver, MediaVariant, ResolvedMedia } from "../types";
+import { YtDlpFormat, maxHeight, onDemandVariants } from "../formats";
+import { assembleResolvedMedia, pickTitle, roundDuration } from "../assemble";
+
+export type { YtDlpFormat };
 
 /**
  * yt-dlp's raw JSON is far larger than this — we only type the fields we
  * actually read, so we never leak resolver-internal structure past this file.
  */
-export interface YtDlpFormat {
-  format_id?: string;
-  ext?: string;
-  vcodec?: string;
-  acodec?: string;
-  protocol?: string;
-  width?: number;
-  height?: number;
-  tbr?: number; // total bitrate, kbps
-  url?: string;
-}
-
 export interface YtDlpOutput {
   title?: string;
   description?: string;
@@ -26,6 +18,9 @@ export interface YtDlpOutput {
   duration?: number;
   formats?: YtDlpFormat[];
   extractor?: string;
+  playlist_index?: number | null;
+  uploader?: string; // display name, e.g. "Prime Video UK & IE"
+  uploader_id?: string; // the @handle, e.g. "primevideouk"
 }
 
 function mapQualityLabel(format: YtDlpFormat): string {
@@ -48,7 +43,11 @@ export function classifyResolverFailure(stderr: string): AppError {
     lower.includes("this content isn't available") ||
     lower.includes("account is temporarily unavailable") ||
     lower.includes("suspended") ||
-    lower.includes("private")
+    lower.includes("private") ||
+    // Ended/deleted live broadcasts — verified wording from a real
+    // broadcast tweet: "[twitter:broadcast] …: Broadcast no longer exists".
+    lower.includes("no longer exists") ||
+    lower.includes("no longer available")
   ) {
     return new AppError("VIDEO_UNAVAILABLE", "This post is not publicly accessible.");
   }
@@ -68,26 +67,44 @@ export function classifyResolverFailure(stderr: string): AppError {
  */
 function extractHandle(sourceUrl: string): string | undefined {
   const match = sourceUrl.match(/^https:\/\/x\.com\/([A-Za-z0-9_]+)\/status\/\d+/);
-  return match ? match[1] : undefined;
+  // "i" is X's placeholder for handle-less links (/i/status/<id>), not a user.
+  return match && match[1] !== "i" ? match[1] : undefined;
+}
+
+// Animated GIFs on X are served as silent MP4s from /tweet_video/
+// (regular videos live under /ext_tw_video/ or /amplify_video/). yt-dlp
+// doesn't flag them, and leaves acodec unset on every progressive
+// format, so the URL path is the one reliable signal.
+function isGifUrl(url: string): boolean {
+  return url.includes("/tweet_video/");
 }
 
 /**
- * Normalizes yt-dlp's raw --dump-json output into XDrop's generic
- * ResolvedMedia shape. Exported (pure, no I/O) so resolver-response
- * normalization is covered by tests without shelling out to the real
- * yt-dlp binary.
+ * Normalizes one yt-dlp entry (one video of the post) into a MediaItem.
+ *
+ * Plain file variants: only progressive (single-file, directly-fetchable)
+ * mp4 variants with an actual video track — what a <video> tag / plain
+ * download link can use without an HLS player or client-side muxing.
+ *
+ * Note: yt-dlp's twitter extractor often leaves `vcodec` as null/undefined
+ * (rather than the explicit string "none") on these progressive formats,
+ * so we treat "has width+height and vcodec isn't explicitly 'none'" as
+ * "this is a video track", not "vcodec is truthy".
+ *
+ * On top of those, onDemandVariants() adds a merged variant when X's HLS
+ * streams beat every progressive file (and is the *only* option for
+ * HLS-only videos — previously a hard failure), plus MP3 audio; both need
+ * ffmpeg — see formats.ts.
  */
-export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): ResolvedMedia {
+function normalizeItem(
+  sourceUrl: string,
+  raw: YtDlpOutput,
+  index: number,
+  multi: boolean,
+  canMerge?: boolean
+): MediaItem {
   const formats = raw.formats ?? [];
 
-  // Only progressive (single-file, directly-fetchable) mp4 variants with an
-  // actual video track — this is what a <video> tag / plain download link
-  // can use without an HLS player or client-side muxing.
-  //
-  // Note: yt-dlp's twitter extractor often leaves `vcodec` as null/undefined
-  // (rather than the explicit string "none") on these progressive formats,
-  // so we treat "has width+height and vcodec isn't explicitly 'none'" as
-  // "this is a video track", not "vcodec is truthy".
   const progressive = formats.filter(
     (f) =>
       f.url &&
@@ -109,38 +126,86 @@ export function normalizeYtDlpOutput(sourceUrl: string, raw: YtDlpOutput): Resol
     }
   }
 
-  const media: MediaVariant[] = Array.from(byQuality.values())
+  const files: MediaVariant[] = Array.from(byQuality.values())
     .map((f) => ({
       url: f.url as string,
       quality: mapQualityLabel(f),
-      width: f.width,
-      height: f.height,
+      width: f.width ?? undefined,
+      height: f.height ?? undefined,
       bitrate: f.tbr ? Math.round(f.tbr * 1000) : undefined,
       format: f.ext ?? "mp4",
       // Same defensive treatment as vcodec above: yt-dlp leaves acodec
       // null/undefined on these progressive formats rather than an
-      // explicit "none" — X doesn't serve silent progressive downloads,
-      // so undefined is treated as "has audio", not "unknown/false".
-      hasAudio: f.acodec !== "none",
+      // explicit "none" — X doesn't serve silent progressive downloads
+      // (GIFs aside, detected by URL), so undefined is treated as "has
+      // audio", not "unknown/false".
+      hasAudio: f.acodec !== "none" && !isGifUrl(f.url as string),
+      kind: "file" as const,
     }))
     .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
 
-  if (media.length === 0) {
-    throw new AppError("VIDEO_UNAVAILABLE", "No downloadable media variants were found.");
+  const isGif = files.length > 0 && files.every((v) => !v.hasAudio);
+  let extra: MediaVariant[] = [];
+  if (!isGif) {
+    try {
+      new URL(sourceUrl);
+      const bestFile = Array.from(byQuality.values()).sort((a, b) => (b.tbr ?? 0) - (a.tbr ?? 0))[0];
+      extra = onDemandVariants(sourceUrl, formats, {
+        item: multi ? index : undefined,
+        fileMaxHeight: maxHeight(files),
+        fallbackAudioFormatId: bestFile?.format_id,
+        canMerge,
+      });
+    } catch {
+      // sourceUrl isn't a real URL (only possible from a direct caller,
+      // never from resolve()) — skip on-demand variants rather than fail.
+    }
   }
 
-  const handle = extractHandle(sourceUrl);
-  const author: MediaAuthor | undefined = handle ? { username: handle } : undefined;
+  const merged = extra.filter((v) => v.kind === "merged");
+  const audio = extra.filter((v) => v.kind === "audio");
 
   return {
+    index,
+    title: pickTitle(raw),
+    thumbnail: raw.thumbnail,
+    duration: roundDuration(raw.duration),
+    media: [...merged, ...files, ...audio],
+  };
+}
+
+/**
+ * Normalizes yt-dlp's raw --dump-json output — one entry per video in the
+ * tweet (up to four) — into XDrop's generic ResolvedMedia shape. Exported
+ * (pure, no I/O) so resolver-response normalization is covered by tests
+ * without shelling out to the real yt-dlp binary. `canMerge` defaults to
+ * whether ffmpeg is available.
+ */
+export function normalizeYtDlpOutput(
+  sourceUrl: string,
+  raw: YtDlpOutput | YtDlpOutput[],
+  options: { canMerge?: boolean } = {}
+): ResolvedMedia {
+  const entries = Array.isArray(raw) ? raw : [raw];
+  const multi = entries.length > 1;
+  const items = entries.map((entry, i) =>
+    normalizeItem(sourceUrl, entry, entry.playlist_index ?? i + 1, multi, options.canMerge)
+  );
+
+  // The handle in the URL is authoritative; yt-dlp's uploader_id is only
+  // the fallback for handle-less /i/status/<id> links.
+  const handle = extractHandle(sourceUrl) ?? entries[0]?.uploader_id;
+  const author: MediaAuthor | undefined = handle
+    ? { username: handle, displayName: entries[0]?.uploader || undefined }
+    : undefined;
+
+  return assembleResolvedMedia({
     platform: "x",
     sourceUrl,
-    thumbnail: raw.thumbnail,
-    title: raw.title ?? raw.description?.slice(0, 140),
+    id: xStatusId(sourceUrl),
     author,
-    duration: raw.duration ? Math.round(raw.duration) : undefined,
-    media,
-  };
+    items,
+  });
 }
 
 export class XVideoResolver implements MediaResolver {
@@ -150,37 +215,38 @@ export class XVideoResolver implements MediaResolver {
     // (platform-detector.ts) only checked the hostname.
     const normalizedUrl = normalizeXUrl(url);
 
-    const { stdout, stderr, code } = await runYtDlp(normalizedUrl);
+    // allowPlaylist: a tweet can carry up to four videos, each its own
+    // yt-dlp entry (one JSON line each).
+    const { stdout, stderr, code } = await runYtDlp(normalizedUrl, undefined, undefined, {
+      allowPlaylist: true,
+    });
 
     if (code !== 0 || !stdout.trim()) {
       throw classifyResolverFailure(stderr);
     }
 
-    let raw: YtDlpOutput;
-    try {
-      // yt-dlp can print one JSON object per line for playlists; we asked
-      // for --no-playlist so take the first line.
-      raw = JSON.parse(stdout.trim().split("\n")[0]);
-    } catch (err) {
-      throw new AppError(
-        "VIDEO_RESOLUTION_FAILED",
-        "Unable to parse the resolver response.",
-        { cause: err }
-      );
+    const entries = parseYtDlpJsonLines<YtDlpOutput>(stdout);
+    if (entries.length === 0) {
+      throw new AppError("VIDEO_RESOLUTION_FAILED", "Unable to parse the resolver response.", {
+        cause: stdout.slice(0, 500),
+      });
     }
 
     // yt-dlp's twitter extractor will follow an embedded link to a video
     // hosted on a *different* site (e.g. a tweet that just links a YouTube
     // video) and happily resolve that instead. XDrop only resolves video
-    // actually hosted on X — reject anything else so we never normalize
+    // actually hosted on X — drop anything else so we never normalize
     // (and later proxy-download) media from an arbitrary third-party host.
-    if (raw.extractor && !raw.extractor.toLowerCase().startsWith("twitter")) {
+    const ownEntries = entries.filter(
+      (e) => !e.extractor || e.extractor.toLowerCase().startsWith("twitter")
+    );
+    if (ownEntries.length === 0) {
       throw new AppError(
         "VIDEO_NOT_FOUND",
         "This post does not contain a video hosted on X."
       );
     }
 
-    return normalizeYtDlpOutput(normalizedUrl, raw);
+    return normalizeYtDlpOutput(normalizedUrl, ownEntries);
   }
 }

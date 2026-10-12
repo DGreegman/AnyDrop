@@ -63,7 +63,8 @@ describe("normalizeYtDlpOutput", () => {
     const result = normalizeYtDlpOutput("https://www.tiktok.com/@natgeo/video/7595589117723954487", raw);
 
     expect(result.platform).toBe("tiktok");
-    expect(result.media).toHaveLength(2); // 540p and 720p, mirror duplicate dropped
+    const videos = result.media.filter((v) => v.kind !== "audio");
+    expect(videos).toHaveLength(2); // 540p and 720p, mirror duplicate dropped
 
     expect(result.media[0]).toMatchObject({
       quality: "1280p",
@@ -91,9 +92,29 @@ describe("normalizeYtDlpOutput", () => {
     expect(result.duration).toBe(98);
   });
 
-  it("never includes a thumbnail (TikTok's thumbnail CDN is Akamai-gated, same as the video CDN)", () => {
-    const result = normalizeYtDlpOutput("https://www.tiktok.com/@natgeo/video/1", raw);
-    expect(result.thumbnail).toBeUndefined();
+  it("offers TikTok's own MP3 soundtrack as an audio variant, without needing ffmpeg", () => {
+    const result = normalizeYtDlpOutput("https://www.tiktok.com/@natgeo/video/7595589117723954487", raw, {
+      canMerge: false,
+    });
+    const audio = result.media.filter((v) => v.kind === "audio");
+    expect(audio).toHaveLength(1);
+    expect(audio[0]).toMatchObject({ format: "mp3", hasAudio: true });
+    expect(audio[0].url).toBe(
+      "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=audio&xdrop_audio=copy"
+    );
+    // The audio variant sorts after every video variant.
+    expect(result.media[result.media.length - 1].kind).toBe("audio");
+  });
+
+  it("passes the thumbnail through (TikTok's cover-image CDN is fetchable, unlike its video CDN)", () => {
+    const withThumb: YtDlpOutput = { ...raw, thumbnail: "https://p16-common-sign.tiktokcdn.com/cover.jpg" };
+    const result = normalizeYtDlpOutput("https://www.tiktok.com/@natgeo/video/1", withThumb);
+    expect(result.thumbnail).toBe("https://p16-common-sign.tiktokcdn.com/cover.jpg");
+  });
+
+  it("reports the video id", () => {
+    const result = normalizeYtDlpOutput("https://www.tiktok.com/@natgeo/video/7595589117723954487", raw);
+    expect(result.id).toBe("7595589117723954487");
   });
 
   it("throws VIDEO_UNAVAILABLE when there's no progressive (audio+video) format at all", () => {
