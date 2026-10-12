@@ -9,9 +9,11 @@ import { AudioMode, XDROP_AUDIO_PARAM, XDROP_FORMAT_PARAM, XDROP_ITEM_PARAM } fr
 import { normalizeXUrl } from "./x/validator";
 import { normalizeInstagramUrl } from "./instagram/validator";
 import { normalizeTikTokUrl } from "./tiktok/validator";
+import { normalizeFacebookUrl } from "./facebook/validator";
 import { classifyResolverFailure as classifyX } from "./x/resolver";
 import { classifyResolverFailure as classifyInstagram } from "./instagram/resolver";
 import { classifyResolverFailure as classifyTikTok } from "./tiktok/resolver";
+import { classifyResolverFailure as classifyFacebook } from "./facebook/resolver";
 
 /**
  * A "passthrough" media reference is a validated post URL plus the exact
@@ -37,17 +39,18 @@ const ITEM_RE = /^(?:[1-9]|1\d|20)$/; // 1..20, matching the resolvers' playlist
 const AUDIO_MODES: ReadonlySet<string> = new Set<AudioMode>(["mp3", "copy"]);
 const PASSTHROUGH_PARAMS = new Set([XDROP_FORMAT_PARAM, XDROP_ITEM_PARAM, XDROP_AUDIO_PARAM]);
 
-// Platforms with a resolver; one without can't have produced a reference.
-const NORMALIZERS: Partial<Record<Platform, (url: string) => string>> = {
+const NORMALIZERS: Record<Platform, (url: string) => string> = {
   x: normalizeXUrl,
   instagram: normalizeInstagramUrl,
   tiktok: normalizeTikTokUrl,
+  facebook: normalizeFacebookUrl,
 };
 
-const CLASSIFIERS: Partial<Record<Platform, (stderr: string) => AppError>> = {
+const CLASSIFIERS: Record<Platform, (stderr: string) => AppError> = {
   x: classifyX,
   instagram: classifyInstagram,
   tiktok: classifyTikTok,
+  facebook: classifyFacebook,
 };
 
 export interface PassthroughRequest {
@@ -69,8 +72,7 @@ export interface PassthroughRequest {
  */
 export function parsePassthroughUrl(url: URL): PassthroughRequest | null {
   const platform = platformForHostname(url.hostname);
-  const normalize = platform && NORMALIZERS[platform];
-  if (!platform || !normalize) return null;
+  if (!platform) return null;
 
   const formatSpec = url.searchParams.get(XDROP_FORMAT_PARAM);
   if (!formatSpec || !FORMAT_SPEC_RE.test(formatSpec)) return null;
@@ -87,7 +89,7 @@ export function parsePassthroughUrl(url: URL): PassthroughRequest | null {
 
   let canonical: string;
   try {
-    canonical = normalize(pageUrl);
+    canonical = NORMALIZERS[platform](pageUrl);
   } catch {
     return null;
   }
@@ -244,12 +246,7 @@ export async function buildPassthroughResponse(
       if (timedOut()) {
         rejectFirstChunk(new AppError("RESOLVER_TIMEOUT", "Timed out while downloading the video."));
       } else {
-        const classify = CLASSIFIERS[req.platform];
-        rejectFirstChunk(
-          classify
-            ? classify(stderr)
-            : new AppError("DOWNLOAD_FAILED", "The media could not be downloaded.", { cause: stderr })
-        );
+        rejectFirstChunk(CLASSIFIERS[req.platform](stderr));
       }
     } else if (timedOut()) {
       // Stalled mid-stream: end the response as an error rather than

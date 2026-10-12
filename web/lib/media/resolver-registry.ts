@@ -3,26 +3,22 @@ import { MediaResolver, Platform } from "./types";
 import { XVideoResolver } from "./x/resolver";
 import { InstagramResolver } from "./instagram/resolver";
 import { TikTokResolver } from "./tiktok/resolver";
-
-const PLATFORM_LABELS: Record<Platform, string> = {
-  x: "X",
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  facebook: "Facebook",
-};
+import { FacebookResolver } from "./facebook/resolver";
+import { PLATFORM_LABELS } from "./platforms";
 
 /**
- * Platform -> MediaResolver factory. "x", "instagram", and "tiktok" are
- * implemented; platform-detector.ts already recognizes facebook URLs too
- * (so the app can tell users "yes, that's a Facebook link" vs "I don't
- * know what that is"), but there's deliberately no resolver registered
- * for it yet — adding one later is exactly one new entry here plus a new
- * `<platform>/resolver.ts`, no other file needs to change.
+ * Platform -> MediaResolver factory. Every platform platform-detector.ts
+ * recognizes has a resolver; the Partial<> and the error below stay so a
+ * platform can be *recognized* ahead of being implemented (users get
+ * "that's a <Platform> link, not supported yet" instead of "I don't know
+ * what that is"). Adding one is one new entry here plus a new
+ * `<platform>/resolver.ts`.
  */
 const resolverFactories: Partial<Record<Platform, () => MediaResolver>> = {
   x: () => new XVideoResolver(),
   instagram: () => new InstagramResolver(),
   tiktok: () => new TikTokResolver(),
+  facebook: () => new FacebookResolver(),
 };
 
 // One resolver instance per platform, built lazily on first use, rather
@@ -37,7 +33,7 @@ export function getResolver(platform: Platform): MediaResolver {
   if (!factory) {
     throw new AppError(
       "UNSUPPORTED_URL",
-      `${PLATFORM_LABELS[platform]} isn't supported yet — X is the only supported platform right now.`
+      `${PLATFORM_LABELS[platform]} isn't supported yet.`
     );
   }
 

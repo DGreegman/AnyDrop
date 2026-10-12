@@ -3,7 +3,7 @@ import { getResolver } from "@/lib/media/resolver-registry";
 import { XVideoResolver } from "@/lib/media/x/resolver";
 import { InstagramResolver } from "@/lib/media/instagram/resolver";
 import { TikTokResolver } from "@/lib/media/tiktok/resolver";
-import { AppError } from "@/lib/media/errors";
+import { FacebookResolver } from "@/lib/media/facebook/resolver";
 
 describe("getResolver", () => {
   it("resolves 'x' to an XVideoResolver instance", () => {
@@ -25,16 +25,10 @@ describe("getResolver", () => {
     expect(getResolver("x")).toBe(getResolver("x"));
     expect(getResolver("instagram")).toBe(getResolver("instagram"));
     expect(getResolver("tiktok")).toBe(getResolver("tiktok"));
+    expect(getResolver("facebook")).toBe(getResolver("facebook"));
   });
 
-  it("fails cleanly for a recognized-but-unimplemented platform: facebook", () => {
-    try {
-      getResolver("facebook");
-      throw new Error("expected to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(AppError);
-      expect((err as AppError).code).toBe("UNSUPPORTED_URL");
-      expect((err as AppError).message).not.toContain("undefined");
-    }
+  it("resolves 'facebook' to a FacebookResolver instance", () => {
+    expect(getResolver("facebook")).toBeInstanceOf(FacebookResolver);
   });
 });

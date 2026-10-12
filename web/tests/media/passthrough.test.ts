@@ -24,6 +24,9 @@ describe("parsePassthroughUrl", () => {
     expect(
       parse("https://x.com/primevideouk/status/1578401165338976258?xdrop_format=hls-audio-128000-Audio&xdrop_item=2&xdrop_audio=mp3")
     ).toMatchObject({ platform: "x", item: 2, audio: "mp3" });
+    expect(
+      parse("https://www.facebook.com/watch/?v=647537299265662&xdrop_format=hd&xdrop_audio=mp3")
+    ).toMatchObject({ platform: "facebook", pageUrl: "https://www.facebook.com/watch/?v=647537299265662" });
   });
 
   it.each([

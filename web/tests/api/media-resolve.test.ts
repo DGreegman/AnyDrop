@@ -80,9 +80,9 @@ describe("POST /api/media/resolve", () => {
     expect(body.error.code).toBe("INVALID_URL");
   });
 
-  it("returns 400 UNSUPPORTED_URL for a recognized-but-unimplemented platform (Facebook)", async () => {
+  it("returns 400 UNSUPPORTED_URL for a Facebook link that isn't a video (validated before any network call)", async () => {
     const res = await mediaResolvePOST(
-      postRequest("/api/media/resolve", { url: "https://www.facebook.com/reel/123" })
+      postRequest("/api/media/resolve", { url: "https://www.facebook.com/somepage" })
     );
     expect(res.status).toBe(400);
     const body = await res.json();
