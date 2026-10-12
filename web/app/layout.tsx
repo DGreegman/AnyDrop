@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: "XDrop",
-  description: "Paste a public X (Twitter) post URL to fetch and download its video.",
+  description: "Download videos from public X, Instagram, TikTok and Facebook posts.",
   appleWebApp: { title: "XDrop", statusBarStyle: "black-translucent" },
 };
 
