@@ -43,6 +43,17 @@ describe("validateResolveRequest", () => {
     }
   });
 
+  it("extracts the link from share-sheet text", () => {
+    const result = validateResolveRequest({
+      url: "Check out this video! https://vm.tiktok.com/ZMabc123/ #fyp",
+    });
+    expect(result.url).toBe("https://vm.tiktok.com/ZMabc123/");
+  });
+
+  it("rejects absurdly long input", () => {
+    expect(() => validateResolveRequest({ url: "a".repeat(5000) })).toThrow(AppError);
+  });
+
   it("does not itself reject a malformed or unsupported URL — that's platform-detector's job", () => {
     // Deliberately not a real URL — validateResolveRequest only checks
     // the request body shape, not the URL's validity.
