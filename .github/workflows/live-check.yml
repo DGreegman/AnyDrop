@@ -1,0 +1,32 @@
+# Daily check that every platform still resolves and downloads, using the
+# newest yt-dlp release. The platforms change their sites without notice;
+# this turns "users report it's broken" into "CI went red this morning".
+# A failure here usually means: update yt-dlp on the server
+# (`npm run update-resolver` in web/), or a sample post was deleted
+# (swap it in web/tests-live/platforms.live.test.ts).
+name: Live platform check
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # postinstall fetches the latest yt-dlp release (checksum-verified).
+      - run: npm ci
+      - run: npm run test:live
