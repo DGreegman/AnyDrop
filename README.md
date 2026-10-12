@@ -377,7 +377,9 @@ what's already buffered.
 ### Legacy: `POST /api/videos/resolve`, `GET /api/videos/download`
 
 Kept working, unchanged, for backward compatibility from when XDrop was
-X-only — the current frontend still calls these. `/api/videos/resolve`
+X-only, for external callers of the old contract — XDrop's own frontend
+no longer uses them (it calls `/api/media/*`, see
+[`lib/client-api.ts`](./web/lib/client-api.ts)). `/api/videos/resolve`
 calls the exact same `MediaService` as `/api/media/resolve` and adapts the
 result back into the old `{ videos: [...] }` shape (no `platform`,
 `author`, or `hasAudio` fields); `/api/videos/download` is a direct
