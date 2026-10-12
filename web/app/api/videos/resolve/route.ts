@@ -12,10 +12,11 @@ const mediaService = new MediaService();
 
 /**
  * Legacy X-only shape this endpoint returned before the media-platform
- * generalization (see lib/media/). Kept identical so the current
- * frontend (lib/client-api.ts) and any external consumers don't need to
- * change: this is the same MediaService, MEDIA -> VIDEO renamed on the
- * way out.
+ * generalization (see lib/media/). Kept identical so external consumers
+ * of the old contract don't need to change (XDrop's own frontend uses
+ * /api/media/resolve): this is the same MediaService, MEDIA -> VIDEO
+ * renamed on the way out. Only the first video of a multi-video post is
+ * included — the old shape has no way to express more.
  */
 function toLegacyVideoShape(media: ResolvedMedia) {
   return {
