@@ -21,6 +21,11 @@ export default function manifest(): MetadataRoute.Manifest {
     // /?title=…&text=…&url=… — HomeClient reads all three, since apps
     // disagree about which one carries the link (many put it in `text`,
     // surrounded by other words).
+    // Lets Chrome on Android tell a normal browser tab that XDrop is
+    // already installed (navigator.getInstalledRelatedApps, used by
+    // InstallPrompt.tsx). Relative — resolved against the manifest's own
+    // URL, so it's right on every deployment/domain.
+    related_applications: [{ platform: "webapp", url: "/manifest.webmanifest" }],
     share_target: {
       action: "/",
       method: "GET",

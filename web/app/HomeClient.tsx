@@ -20,6 +20,7 @@ import {
   formatRelativeTime,
 } from "@/lib/recent";
 import { PLATFORM_LABELS, extractMediaUrl, platformForUrl } from "@/lib/media/platforms";
+import InstallPrompt from "./InstallPrompt";
 
 type Status = "idle" | "loading" | "error" | "success";
 
@@ -27,13 +28,6 @@ interface DownloadState {
   progress?: DownloadProgress;
   error?: string;
   done?: boolean;
-}
-
-// Chrome/Edge/Samsung Internet fire this when the page is installable;
-// not part of TypeScript's DOM lib.
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
 function formatDuration(seconds?: number): string | null {
@@ -94,11 +88,6 @@ function variantLabel(variant: MediaVariant): string {
   return variant.quality;
 }
 
-const isStandalone = () =>
-  typeof window !== "undefined" &&
-  (window.matchMedia?.("(display-mode: standalone)").matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true);
-
 export default function HomeClient() {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<Status>("idle");
@@ -112,7 +101,6 @@ export default function HomeClient() {
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [canPaste, setCanPaste] = useState(false);
   const loadingRef = useRef(false);
 
@@ -189,18 +177,6 @@ export default function HomeClient() {
         setStatus("error");
       }
     }
-
-    const onBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setInstallPrompt(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => setInstallPrompt(null);
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
-    window.addEventListener("appinstalled", onInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
     // Mount-only: re-running this would re-read the share params.
   }, []);
 
@@ -237,13 +213,6 @@ export default function HomeClient() {
       setErrorMessage("Couldn't read the clipboard — paste into the box instead.");
       setStatus("error");
     }
-  }
-
-  async function handleInstall() {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    await installPrompt.userChoice.catch(() => undefined);
-    setInstallPrompt(null);
   }
 
   function handleRecentClick(entry: RecentEntry) {
@@ -295,11 +264,7 @@ export default function HomeClient() {
         <h1>Save it. Keep it.</h1>
         <p className="tagline">Download videos from X, Instagram, TikTok and Facebook.</p>
         <p className="supporting">Paste a link to a public post — or share it straight to XDrop.</p>
-        {installPrompt && !isStandalone() && (
-          <button type="button" className="install-btn" onClick={handleInstall}>
-            Install app — then share videos to XDrop
-          </button>
-        )}
+        <InstallPrompt />
       </div>
 
       <form className="url-form" onSubmit={handleSubmit}>

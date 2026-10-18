@@ -218,6 +218,47 @@ input {
   border-color: var(--accent-solid);
 }
 
+.install {
+  margin-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.install-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.install .install-btn {
+  margin-top: 0;
+}
+
+.install-dismiss {
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.install-dismiss:hover {
+  color: var(--text-secondary);
+}
+
+.install-note {
+  max-width: 26rem;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 520px) {
   .url-form {
     flex-direction: column;
