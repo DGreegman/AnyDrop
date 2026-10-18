@@ -37,7 +37,7 @@ const sampleTikTokMedia: ResolvedMedia = {
       width: 720,
       height: 1280,
       format: "mp4",
-      url: "https://www.tiktok.com/@user/video/123?xdrop_format=h264_720p-0",
+      url: "https://www.tiktok.com/@user/video/123?anydrop_format=h264_720p-0",
       hasAudio: true,
     },
   ],
@@ -122,5 +122,97 @@ describe("MediaService.resolveMedia", () => {
       code: "UNSUPPORTED_URL",
     });
     expect(called).toBe(false);
+  });
+});
+
+describe("MediaService — caching, de-duplication, retry", () => {
+  it("serves a repeat request for the same URL from cache", async () => {
+    let calls = 0;
+    const service = new MediaService(
+      () => fakeResolver(async () => {
+        calls++;
+        return sampleMedia;
+      }),
+      { cacheTtlMs: 60_000 }
+    );
+    await service.resolveMedia("https://x.com/user/status/1");
+    await service.resolveMedia("https://x.com/user/status/1");
+    expect(calls).toBe(1);
+  });
+
+  it("does not cache when the TTL is 0, and never caches failures", async () => {
+    let calls = 0;
+    const service = new MediaService(
+      () => fakeResolver(async () => {
+        calls++;
+        throw new AppError("VIDEO_NOT_FOUND", "nope");
+      }),
+      { cacheTtlMs: 60_000 }
+    );
+    await expect(service.resolveMedia("https://x.com/user/status/1")).rejects.toThrow("nope");
+    await expect(service.resolveMedia("https://x.com/user/status/1")).rejects.toThrow("nope");
+    expect(calls).toBe(2);
+  });
+
+  it("shares one resolve between concurrent requests for the same URL", async () => {
+    let calls = 0;
+    const service = new MediaService(
+      () => fakeResolver(async () => {
+        calls++;
+        await new Promise((r) => setTimeout(r, 20));
+        return sampleMedia;
+      }),
+      { cacheTtlMs: 0 }
+    );
+    const [a, b] = await Promise.all([
+      service.resolveMedia("https://x.com/user/status/1"),
+      service.resolveMedia("https://x.com/user/status/1"),
+    ]);
+    expect(a).toBe(b);
+    expect(calls).toBe(1);
+  });
+
+  it("evicts the oldest entry once the cache is full", async () => {
+    let calls = 0;
+    const service = new MediaService(
+      () => fakeResolver(async () => {
+        calls++;
+        return sampleMedia;
+      }),
+      { cacheTtlMs: 60_000, cacheMaxEntries: 1 }
+    );
+    await service.resolveMedia("https://x.com/user/status/1");
+    await service.resolveMedia("https://x.com/user/status/2"); // evicts /1
+    await service.resolveMedia("https://x.com/user/status/1");
+    expect(calls).toBe(3);
+  });
+
+  it("retries once after a transient-looking failure (VIDEO_RESOLUTION_FAILED)", async () => {
+    let calls = 0;
+    const service = new MediaService(
+      () => fakeResolver(async () => {
+        calls++;
+        if (calls === 1) throw new AppError("VIDEO_RESOLUTION_FAILED", "flaky");
+        return sampleMedia;
+      }),
+      { cacheTtlMs: 0, retryDelayMs: 1 }
+    );
+    await expect(service.resolveMedia("https://x.com/user/status/1")).resolves.toEqual(sampleMedia);
+    expect(calls).toBe(2);
+  });
+
+  it("does not retry definitive failures (NOT_FOUND, UNAVAILABLE, TIMEOUT)", async () => {
+    for (const code of ["VIDEO_NOT_FOUND", "VIDEO_UNAVAILABLE", "RESOLVER_TIMEOUT"] as const) {
+      let calls = 0;
+      const service = new MediaService(
+        () => fakeResolver(async () => {
+          calls++;
+          throw new AppError(code, "x");
+        }),
+        { cacheTtlMs: 0, retryDelayMs: 1 }
+      );
+      await expect(service.resolveMedia("https://x.com/user/status/1")).rejects.toBeInstanceOf(AppError);
+      expect(calls).toBe(1);
+    }
   });
 });

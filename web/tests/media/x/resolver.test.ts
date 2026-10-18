@@ -120,6 +120,85 @@ describe("normalizeYtDlpOutput", () => {
   });
 });
 
+describe("normalizeYtDlpOutput — multi-video, GIFs, and on-demand variants", () => {
+  // Shaped after a real two-video tweet (x.com/primevideouk/status/1578401165338976258):
+  // each video is its own yt-dlp entry with progressive http-* files, an
+  // HLS video stream, and an HLS audio stream (vcodec "none", acodec null).
+  const entry = (n: number) => ({
+    title: "Prime Video UK & IE - A new power will be forged.",
+    thumbnail: `https://pbs.twimg.com/thumb${n}.jpg`,
+    duration: 6.006,
+    extractor: "twitter",
+    playlist_index: n,
+    uploader: "Prime Video UK & IE",
+    uploader_id: "primevideouk",
+    formats: [
+      { format_id: "hls-audio-128000-Audio", ext: "mp4", protocol: "m3u8_native", vcodec: "none", acodec: null, tbr: 128, url: `https://video.twimg.com/${n}/audio.m3u8` },
+      { format_id: "http-832", ext: "mp4", protocol: "https", width: 540, height: 540, tbr: 832, url: `https://video.twimg.com/${n}/540.mp4` },
+      { format_id: "http-1280", ext: "mp4", protocol: "https", width: 720, height: 720, tbr: 1280, url: `https://video.twimg.com/${n}/720.mp4` },
+      { format_id: "hls-772", ext: "mp4", protocol: "m3u8_native", vcodec: "avc1.64001F", acodec: "none", width: 720, height: 720, tbr: 772, url: `https://video.twimg.com/${n}/720.m3u8` },
+    ],
+  });
+  const source = "https://x.com/primevideouk/status/1578401165338976258";
+
+  it("returns every video in the post as an item, with top-level fields mirroring the first", () => {
+    const result = normalizeYtDlpOutput(source, [entry(1), entry(2)], { canMerge: false });
+    expect(result.items).toHaveLength(2);
+    expect(result.items!.map((i) => i.index)).toEqual([1, 2]);
+    expect(result.media).toBe(result.items![0].media);
+    expect(result.thumbnail).toBe("https://pbs.twimg.com/thumb1.jpg");
+    expect(result.items![1].media[0].url).toBe("https://video.twimg.com/2/720.mp4");
+    expect(result.id).toBe("1578401165338976258");
+  });
+
+  it("omits `items` for a single-video post", () => {
+    expect(normalizeYtDlpOutput(source, entry(1), { canMerge: false }).items).toBeUndefined();
+  });
+
+  it("doesn't offer a merged variant that's no better than an existing file, but does offer MP3", () => {
+    const result = normalizeYtDlpOutput(source, [entry(1), entry(2)], { canMerge: true });
+    const second = result.items![1].media;
+    expect(second.some((v) => v.kind === "merged")).toBe(false); // HLS 720p == http 720p
+    const audio = second.find((v) => v.kind === "audio")!;
+    const url = new URL(audio.url);
+    expect(url.searchParams.get("anydrop_format")).toBe("hls-audio-128000-Audio");
+    expect(url.searchParams.get("anydrop_item")).toBe("2");
+    expect(url.searchParams.get("anydrop_audio")).toBe("mp3");
+  });
+
+  it("serves an HLS-only video through a merged variant instead of failing", () => {
+    const hlsOnly = {
+      ...entry(1),
+      playlist_index: null,
+      formats: entry(1).formats.filter((f) => !f.format_id.startsWith("http-")),
+    };
+    const result = normalizeYtDlpOutput(source, hlsOnly, { canMerge: true });
+    expect(result.media[0]).toMatchObject({ kind: "merged", quality: "720p", hasAudio: true });
+    expect(new URL(result.media[0].url).searchParams.get("anydrop_item")).toBeNull();
+    // ...and without ffmpeg it's still an honest failure.
+    expect(() => normalizeYtDlpOutput(source, hlsOnly, { canMerge: false })).toThrow(AppError);
+  });
+
+  it("marks GIFs (served from /tweet_video/) as silent and offers no MP3 for them", () => {
+    const gif = {
+      extractor: "twitter",
+      formats: [
+        { format_id: "http-0", ext: "mp4", protocol: "https", width: 480, height: 270, url: "https://video.twimg.com/tweet_video/abc.mp4" },
+      ],
+    };
+    const result = normalizeYtDlpOutput("https://x.com/a/status/1", gif, { canMerge: true });
+    expect(result.media).toHaveLength(1);
+    expect(result.media[0].hasAudio).toBe(false);
+  });
+
+  it("falls back to yt-dlp's uploader_id for handle-less /i/status links", () => {
+    const result = normalizeYtDlpOutput("https://x.com/i/status/1578401165338976258", entry(1), {
+      canMerge: false,
+    });
+    expect(result.author).toEqual({ username: "primevideouk", displayName: "Prime Video UK & IE" });
+  });
+});
+
 describe("classifyResolverFailure", () => {
   it("maps 'no video could be found' to VIDEO_NOT_FOUND", () => {
     const err = classifyResolverFailure(
@@ -130,6 +209,13 @@ describe("classifyResolverFailure", () => {
 
   it("maps a private/suspended account message to VIDEO_UNAVAILABLE", () => {
     const err = classifyResolverFailure("ERROR: [twitter] 123: Account is temporarily unavailable");
+    expect(err.code).toBe("VIDEO_UNAVAILABLE");
+  });
+
+  it("maps an ended/deleted broadcast to VIDEO_UNAVAILABLE", () => {
+    const err = classifyResolverFailure(
+      "ERROR: [twitter:broadcast] 1rmxPMjLzAXKN: Broadcast no longer exists"
+    );
     expect(err.code).toBe("VIDEO_UNAVAILABLE");
   });
 

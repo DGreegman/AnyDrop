@@ -7,7 +7,7 @@ export default function RegisterSW() {
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {
-        // Non-fatal — XDrop works the same without it, just not installable.
+        // Non-fatal — AnyDrop works the same without it, just not installable.
       });
     }
   }, []);

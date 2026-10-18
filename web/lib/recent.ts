@@ -10,11 +10,22 @@ export interface RecentEntry {
   resolvedAt: number;
 }
 
-const STORAGE_KEY = "xdrop:recent";
+const STORAGE_KEY = "anydrop:recent";
+// The app was called XDrop before supporting more than X. Carried over
+// once so a returning visitor's list survives the rename.
+const LEGACY_STORAGE_KEY = "xdrop:recent";
 const MAX_ENTRIES = 5;
+
+function migrateLegacyKey(): void {
+  const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (legacy === null) return;
+  if (localStorage.getItem(STORAGE_KEY) === null) localStorage.setItem(STORAGE_KEY, legacy);
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
+}
 
 export function loadRecent(): RecentEntry[] {
   try {
+    migrateLegacyKey();
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);

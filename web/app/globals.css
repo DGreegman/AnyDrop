@@ -16,6 +16,11 @@
   --accent-gradient: linear-gradient(135deg, var(--accent-from), var(--accent-to));
   --accent-solid: #6d5efc;
 
+  --platform-x: #e7e9ea;
+  --platform-instagram: #e1306c;
+  --platform-tiktok: #25f4ee;
+  --platform-facebook: #1877f2;
+
   --danger: #ff6b6b;
   --danger-bg: rgba(255, 107, 107, 0.1);
 
@@ -96,6 +101,13 @@ input {
   margin-top: 2rem;
 }
 
+.input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
+
 .url-form input {
   flex: 1;
   min-width: 0;
@@ -137,6 +149,114 @@ input {
 .url-form button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.url-form .paste-btn {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--bg-elevated-hover);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.url-form .paste-btn:hover {
+  color: var(--text);
+  opacity: 1;
+}
+
+.url-hint {
+  min-height: 1.2rem;
+  margin: 0.55rem 0.2rem 0;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.platform-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--platform-color, var(--text-tertiary));
+  flex-shrink: 0;
+}
+
+.platform-x {
+  --platform-color: var(--platform-x);
+}
+.platform-instagram {
+  --platform-color: var(--platform-instagram);
+}
+.platform-tiktok {
+  --platform-color: var(--platform-tiktok);
+}
+.platform-facebook {
+  --platform-color: var(--platform-facebook);
+}
+
+.install-btn {
+  margin-top: 1.1rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.install-btn:hover {
+  color: var(--text);
+  border-color: var(--accent-solid);
+}
+
+.install {
+  margin-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.install-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.install .install-btn {
+  margin-top: 0;
+}
+
+.install-dismiss {
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.install-dismiss:hover {
+  color: var(--text-secondary);
+}
+
+.install-note {
+  max-width: 26rem;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 @media (max-width: 520px) {
@@ -324,6 +444,50 @@ input {
   color: var(--text-tertiary);
 }
 
+.platform-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.12rem 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid var(--platform-color, var(--border-strong));
+  color: var(--platform-color, var(--text-secondary));
+}
+
+.item-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+.item-tab {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.item-tab.selected {
+  border-color: var(--accent-solid);
+  color: var(--text);
+  background: rgba(109, 94, 252, 0.12);
+}
+
+.audio-preview {
+  line-height: normal;
+  display: flex;
+  flex-direction: column;
+}
+
+.audio-player {
+  width: 100%;
+  display: block;
+}
+
 /* ---------- qualities ---------- */
 
 .qualities {
@@ -365,6 +529,11 @@ input {
   background: linear-gradient(135deg, rgba(91, 124, 250, 0.1), rgba(168, 85, 247, 0.1));
 }
 
+.quality-main {
+  flex: 1;
+  min-width: 0;
+}
+
 .quality-btn {
   background: none;
   border: none;
@@ -372,8 +541,9 @@ input {
   cursor: pointer;
   color: var(--text);
   text-align: left;
-  flex: 1;
+  width: 100%;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.5rem;
   padding: 0;
@@ -399,7 +569,37 @@ input {
   border-radius: 9999px;
 }
 
+.hq-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-solid);
+  border: 1px solid var(--accent-solid);
+  padding: 0.1rem 0.45rem;
+  border-radius: 9999px;
+}
+
+.row-error,
+.row-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+}
+
+.row-error {
+  color: var(--danger);
+}
+
+.row-note {
+  color: var(--text-tertiary);
+}
+
 .download-btn {
+  min-width: 6.5rem;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
   padding: 0.45rem 1rem;
   border-radius: 9999px;
   background: var(--accent-gradient);
@@ -413,4 +613,27 @@ input {
 
 .download-btn:hover {
   opacity: 0.9;
+}
+
+.download-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+/* ---------- footer ---------- */
+
+.tips {
+  margin-top: 3rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.tips p {
+  margin: 0.35rem 0;
+}
+
+.tips strong {
+  color: var(--text-secondary);
 }

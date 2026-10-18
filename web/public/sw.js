@@ -1,8 +1,8 @@
-// Minimal service worker — exists to make XDrop installable, not to
+// Minimal service worker — exists to make AnyDrop installable, not to
 // provide offline support. Resolving/downloading a video inherently needs
 // a live connection, so this never caches API responses or video data.
 // The one thing it does cache is a small *static* offline page, purely so
-// a dropped connection shows XDrop's own offline UI instead of the
+// a dropped connection shows AnyDrop's own offline UI instead of the
 // browser's default error page.
 //
 // This deliberately does NOT cache the live "/" route. That was tried
@@ -14,7 +14,7 @@
 // page would render with none of the app's styling even though the HTML
 // itself looked otherwise current. offline.html has no external asset
 // references at all, so it can never go stale this way.
-const SHELL_CACHE = "xdrop-shell-v2";
+const SHELL_CACHE = "anydrop-shell-v2";
 const SHELL_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {

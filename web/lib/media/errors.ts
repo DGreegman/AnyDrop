@@ -26,7 +26,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
  * message. Never put stack traces, file paths, or resolver internals here —
  * that's what `cause` / server-side logging is for.
  *
- * The VIDEO_* codes predate the media-platform generalization (XDrop
+ * The VIDEO_* codes predate the media-platform generalization (AnyDrop
  * started X-only) but stay as-is on purpose: they're specific,
  * well-understood failure conditions from the yt-dlp-backed resolver, and
  * renaming them would be churn for no behavioral benefit — see

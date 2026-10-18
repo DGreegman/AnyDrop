@@ -1,33 +1,63 @@
 import { AppError } from "../errors";
 
-// Instagram Reel URLs come in two shapes:
-//   /reel/<shortcode>/
-//   /<username>/reel/<shortcode>/   (username segment optional)
-// Shortcodes are URL-safe base64-alphabet strings, length varies in practice.
-const REEL_PATH_RE = /^\/(?:[A-Za-z0-9_.]+\/)?reel\/([A-Za-z0-9_-]+)\/?$/;
+// Instagram post URLs AnyDrop handles, each optionally prefixed with the
+// author's username (Instagram links both ways):
+//   /reel/<shortcode>/    /reels/<shortcode>/   Reels
+//   /p/<shortcode>/                             regular posts (single
+//                                               video or a carousel)
+//   /tv/<shortcode>/                            legacy IGTV
+// Same set yt-dlp's Instagram extractor accepts. Shortcodes are
+// URL-safe-base64-alphabet strings; length varies in practice.
+const POST_PATH_RE = /^\/(?:[A-Za-z0-9_.]+\/)?(reels?|p|tv)\/([A-Za-z0-9_-]+)\/?$/;
 
 /**
- * Instagram-specific: confirms the URL is actually a Reel URL (not e.g. a
- * bare profile page) and normalizes it to a canonical
- * https://www.instagram.com/reel/<shortcode>/ form, dropping the optional
- * username segment — yt-dlp resolves the same content either way, so
- * there's no reason to keep multiple equivalent forms floating around.
+ * Instagram-specific: confirms the URL is a post Instagram serves to
+ * logged-out visitors and normalizes it to a canonical
+ * https://www.instagram.com/<reel|p|tv>/<shortcode>/ form — dropping the
+ * optional username segment and tracking params like ?igsh=. "/reels/"
+ * becomes "/reel/" (same content). Idempotent (passthrough.ts relies on
+ * that).
+ *
+ * Stories are rejected with a specific message: Instagram only serves
+ * them to logged-in accounts, and AnyDrop never authenticates.
  *
  * Assumes `url` is already a well-formed http(s) URL on an Instagram
  * hostname — platform-detector.ts guarantees that before this is ever
- * called. Scoped to Reels only, matching XDrop's current Instagram
- * support — regular posts (/p/...) and IGTV (/tv/...) aren't handled.
+ * called.
  */
 export function normalizeInstagramUrl(url: string): string {
   const parsed = new URL(url);
-  const match = parsed.pathname.match(REEL_PATH_RE);
-  if (!match) {
+
+  if (/^\/stories\//.test(parsed.pathname)) {
     throw new AppError(
       "UNSUPPORTED_URL",
-      "The URL does not look like an Instagram Reel (expected /reel/<id> or /<user>/reel/<id>)."
+      "Instagram Stories are only visible to logged-in accounts, so AnyDrop can't download them."
     );
   }
 
-  const shortcode = match[1];
-  return `https://www.instagram.com/reel/${shortcode}/`;
+  const match = parsed.pathname.match(POST_PATH_RE);
+  if (!match) {
+    throw new AppError(
+      "UNSUPPORTED_URL",
+      "The URL does not look like an Instagram post (expected /reel/<id>, /p/<id>, or /tv/<id>)."
+    );
+  }
+
+  const kind = match[1] === "reels" ? "reel" : match[1];
+  const shortcode = match[2];
+  return `https://www.instagram.com/${kind}/${shortcode}/`;
+}
+
+/** True for Instagram's opaque /share/... links, which need a redirect followed first. */
+export function isInstagramShareLink(url: string): boolean {
+  try {
+    return /^\/share\/(?:(?:reel|p|tv)\/)?[A-Za-z0-9_-]+\/?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+/** The shortcode from a canonical Instagram URL. */
+export function instagramShortcode(canonicalUrl: string): string | undefined {
+  return canonicalUrl.match(/\/(?:reel|p|tv)\/([A-Za-z0-9_-]+)\/$/)?.[1];
 }

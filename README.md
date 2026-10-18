@@ -1,26 +1,26 @@
-# XDrop
+# AnyDrop
 
-XDrop is a small, stateless web app that resolves the public video from a
-social post URL, shows the available qualities, and lets you play or
-download one.
+AnyDrop is a small, stateless web app that resolves the video(s) in a public
+social post, shows the available qualities, and lets you play or download
+them — or share a post straight to it from the phone's share sheet.
+
+_Formerly XDrop — renamed once it grew beyond X; the repository and the
+original design doc still use the old name._
 
 ```text
-Paste public post URL → Fetch Video → Resolve public video media
-    → Display available qualities → Play / Download
+Paste a link (or share text containing one) / share from an app
+    → Resolve public media → Pick a quality (or MP3) → Play / Download
 ```
 
-**Supported platforms today:** X (Twitter), Instagram Reels, and TikTok.
-**Recognized but not yet supported:** Facebook — pasting a Facebook link
-gives a clear "not supported yet" error rather than a generic failure;
-there's no resolver behind it yet.
+**Supported platforms:** X (Twitter), Instagram (Reels, posts, carousels,
+IGTV), TikTok, and Facebook (Reels, Watch, page videos, posts, share links).
 
 It's an MVP: no accounts, no database, no queues. See
 [`XDrop_MVP_Architecture.md`](./XDrop_MVP_Architecture.md) for the original
 design; the note at the top of that document explains the deliberate
 deviations from it (Next.js fullstack instead of a separate Express API,
 and the later generalization from an X-only "video" domain to a
-multi-platform "media" domain), made so the whole app stays a single
-Vercel project while growing to more platforms.
+multi-platform "media" domain).
 
 ## Architecture overview
 
@@ -32,8 +32,10 @@ web/
 ├── app/
 │   ├── page.tsx              Server Component (forces dynamic rendering
 │   │                          for the CSP nonce — see proxy.ts below)
-│   ├── HomeClient.tsx         the actual UI: URL input, states, player,
-│   │                          quality list, download buttons
+│   ├── HomeClient.tsx         the UI: link input (paste button, platform
+│   │                          detection, share-target handling), player,
+│   │                          per-video tabs, downloads with progress
+│   ├── manifest.ts            PWA manifest, including the share target
 │   └── api/
 │       ├── media/
 │       │   ├── resolve/route.ts   POST — the platform-agnostic API boundary
@@ -43,26 +45,29 @@ web/
 │           └── download/route.ts
 ├── lib/
 │   ├── media/
-│   │   ├── types.ts           Platform, MediaResolver, ResolvedMedia, MediaVariant
-│   │   ├── platform-detector.ts   hostname → Platform, no network calls
+│   │   ├── types.ts           Platform, MediaResolver, ResolvedMedia, MediaItem, MediaVariant
+│   │   ├── platforms.ts       host → platform table + link extraction (browser AND server)
+│   │   ├── platform-detector.ts   hostname → Platform for the API, no network calls
 │   │   ├── resolver-registry.ts   Platform → MediaResolver factory
-│   │   ├── service.ts         MediaService — the orchestration the API calls
-│   │   ├── validator.ts       generic request-body validation
-│   │   ├── download.ts        media-URL SSRF allowlist + streaming (all platforms)
+│   │   ├── service.ts         MediaService — orchestration, cache, retry
+│   │   ├── validator.ts       request-body validation (+ link extraction)
+│   │   ├── yt-dlp.ts          shared yt-dlp subprocess runner
+│   │   ├── ffmpeg.ts          optional ffmpeg detection
+│   │   ├── formats.ts         shared format picking: merged + MP3 variants
+│   │   ├── assemble.ts        shared final ResolvedMedia assembly
+│   │   ├── download.ts        CDN allowlist + streaming proxy
+│   │   ├── passthrough.ts     downloads that must re-run yt-dlp (TikTok,
+│   │   │                      merged HQ, MP3) — validation + streaming
 │   │   ├── errors.ts          AppError + {success,error} JSON responses
-│   │   ├── config.ts          shared config (rate limits, download timeout)
-│   │   ├── yt-dlp.ts          shared yt-dlp subprocess runner (X/Instagram/TikTok)
-│   │   ├── x/                 X-specific: resolver.ts, validator.ts
-│   │   ├── instagram/         Instagram-specific: resolver.ts, validator.ts
-│   │   └── tiktok/            TikTok-specific: resolver.ts, validator.ts,
-│   │                          download.ts (see below — TikTok's download
-│   │                          step re-invokes yt-dlp, unlike the others)
+│   │   ├── config.ts          shared config (rate limits, timeouts, cache)
+│   │   └── x/ instagram/ tiktok/ facebook/   per platform: resolver.ts, validator.ts
 │   ├── rate-limit.ts          in-memory per-IP limiter
-│   ├── client-api.ts          browser-side fetch helpers
+│   ├── client-api.ts          browser-side fetch helpers (incl. progress downloads)
 │   └── recent.ts              client-side "recent lookups" (localStorage)
 ├── proxy.ts                   per-request CSP nonce (Next 16's Middleware)
-├── app/manifest.ts, RegisterSW.tsx, public/sw.js   PWA — installable, no offline caching of video
-└── bin/yt-dlp, yt-dlp_linux    fetched by `npm install`'s postinstall, not committed
+├── tests/                     unit/route tests (`npm test`, no network)
+├── tests-live/                real-post checks (`npm run test:live`)
+└── bin/yt-dlp, yt-dlp_linux   fetched by `npm install`'s postinstall, not committed
 ```
 
 The app depends only on the `MediaResolver` interface
@@ -75,187 +80,233 @@ interface MediaResolver {
 ```
 
 `MediaService.resolveMedia(url)` is the only thing the API routes call. It
-doesn't know yt-dlp exists, and it doesn't contain any platform-specific
-logic — it just: validates the URL is well-formed, asks
-`platform-detector.ts` which platform it belongs to (hostname only, no
-network request), asks `resolver-registry.ts` for that platform's
-`MediaResolver`, and returns whatever that resolver produces. Adding a
-platform means writing one new `<platform>/resolver.ts` implementing
-`MediaResolver` and adding one line to the registry — nothing else in the
-app changes.
+doesn't know yt-dlp exists and has no platform-specific logic — it asks
+`platform-detector.ts` which platform the URL belongs to (hostname only),
+asks `resolver-registry.ts` for that platform's `MediaResolver`, and returns
+what it produces. On top of that it adds a short-lived in-memory cache of
+successful results (5 minutes by default), in-flight de-duplication (two
+simultaneous requests for one link share one yt-dlp run), and one automatic
+retry for transient-looking failures (`VIDEO_RESOLUTION_FAILED` only — never
+for "not found", "private", or a timeout).
+
+## Getting links in: paste, share text, share sheet
+
+- **Link extraction.** Share sheets and chats hand over text like
+  `Check out this video! https://vm.tiktok.com/ZM.../ #fyp`, not a bare URL.
+  [`extractMediaUrl`](./web/lib/media/platforms.ts) pulls the first
+  supported-platform link out of any text (trimming punctuation glued to
+  its end, accepting scheme-less `x.com/...` too). It runs in the browser
+  (the input cleans itself up) **and** on the server (`/api/media/resolve`
+  accepts the raw text), from one shared host table so the two never
+  disagree.
+- **Platform detection as you type.** The same table shows "TikTok link",
+  "That site isn't supported", etc. under the input instantly, with no
+  server round-trip. Pasting a supported link fetches it immediately.
+- **Paste button.** Reads the clipboard (`navigator.clipboard.readText`,
+  HTTPS or localhost only); normal long-press paste still works where the
+  browser doesn't allow it.
+- **Share target (Android).** [`manifest.ts`](./web/app/manifest.ts)
+  declares a Web Share Target. Once AnyDrop is installed ("Install app"
+  button in the page, or the browser's "Add to Home screen"), it appears in
+  the share sheet of the TikTok/Instagram/X/Facebook apps. Sharing opens
+  `/?title=…&text=…&url=…`; the page searches all three (apps disagree
+  about which carries the link), fetches automatically, and clears the
+  params from the address bar. Works in Chrome, Edge and Samsung Internet
+  on Android. **iOS doesn't support share targets for web apps** — use the
+  Shortcut below.
+
+### iPhone: "Send to AnyDrop" Shortcut
+
+The page handles `/?url=<link>` exactly like a share, so an Apple Shortcut
+gives iPhone users the same one-tap flow:
+
+1. Open **Shortcuts** → **+** → name it **Send to AnyDrop**.
+2. Tap the **ⓘ** (details) → enable **Show in Share Sheet**; set *Receive*
+   to **URLs** and **Text**.
+3. Add action **URL Encode** (input: *Shortcut Input*).
+4. Add action **Text**: `https://<your-anydrop-host>/?url=` followed by the
+   *URL Encoded Text* variable.
+5. Add action **Open URLs** (input: the Text from step 4).
+
+Then: Share → **Send to AnyDrop** from any app.
 
 ## Supported platforms
 
+All four are resolved by shelling out to [**yt-dlp**](https://github.com/yt-dlp/yt-dlp)
+(see **How resolution works**); only the interpretation of its output is
+platform-specific. Posts with several videos (an X tweet with up to four,
+an Instagram carousel) come back as several **items**, shown as tabs.
+
 ### X (Twitter)
 
-`XVideoResolver` ([`lib/media/x/resolver.ts`](./web/lib/media/x/resolver.ts))
-shells out to yt-dlp's `twitter` extractor. See **How resolution works**
-below for the mechanism — it's shared with Instagram.
+Accepted: `x.com/<user>/status/<id>`, `twitter.com/...` (and `www.`/`mobile.`),
+handle-less `x.com/i/web/status/<id>` and `/i/status/<id>`, and the
+`fxtwitter.com`/`vxtwitter.com`/`fixupx.com`/`fixvx.com` embed mirrors
+(verified to redirect to the same x.com path) — all normalized to
+`https://x.com/<user>/status/<id>`.
 
-Accepted URL shapes: `x.com/<user>/status/<id>`,
-`twitter.com/<user>/status/<id>` (and `www.`/`mobile.` host variants),
-normalized to a canonical `https://x.com/<user>/status/<id>` before
-resolving.
+- Plain files: X's progressive MP4s (several qualities).
+- Multi-video tweets: every video is returned (verified on a real
+  two-video tweet; `--no-playlist`, used before, silently kept only the
+  first).
+- GIFs: served by X as silent MP4s from `/tweet_video/`; marked "no sound"
+  and offered without an MP3 option.
+- HLS-only videos (no progressive file): served as a merged variant when
+  ffmpeg is available — previously a hard failure.
 
-### Instagram (Reels only)
+### Instagram
 
-`InstagramResolver`
-([`lib/media/instagram/resolver.ts`](./web/lib/media/instagram/resolver.ts))
-shells out to yt-dlp's `Instagram` extractor. Only Reels are supported —
-regular posts (`/p/...`) and IGTV (`/tv/...`) aren't handled yet.
+Accepted: `/reel/<id>`, `/reels/<id>`, `/p/<id>`, `/tv/<id>` (each with an
+optional `/<username>` prefix), `instagr.am` links, and `/share/...` links
+— normalized to `https://www.instagram.com/<reel|p|tv>/<id>/`.
+Stories are rejected with a specific message: Instagram only shows them to
+logged-in accounts.
 
-Accepted URL shapes: `instagram.com/reel/<id>`,
-`instagram.com/<username>/reel/<id>` (and `www.` variant), normalized to
-`https://www.instagram.com/reel/<id>/`.
+Instagram's yt-dlp output has no single format carrying both real
+dimensions *and* audio: the progressive (audio+video) file is listed 2–3×
+under bare numeric `format_id`s with no width/height, next to DASH
+video-only streams (with real dimensions, up to 1080p) and one DASH audio
+stream. The progressive file is offered as **"Original"** (no invented
+resolution); with ffmpeg, the best DASH video + audio is offered as an
+**HQ** merged variant (verified: 1080×1920 VP9 + AAC from a real post whose
+progressive file is smaller). Carousels are split into items; carousel
+videos Instagram marks as silent are kept and labelled "no sound".
 
-Instagram's yt-dlp output looks nothing like X's, which is why it has its
-own normalization logic rather than sharing X's: a real Reel's
-`--dump-json` (checked against several public Reels before writing any
-code, not assumed) has no single format carrying both real
-width/height/bitrate *and* audio. Instead there's a small set of
-*duplicate* entries — the same URL repeated under different bare-numeric
-`format_id`s — that together represent one playable, audio-carrying
-progressive file with no dimension metadata attached, alongside separate
-DASH video-only and audio-only streams that *do* carry real dimensions.
-XDrop only ever serves single-file, directly-fetchable media (the same
-constraint X's resolver operates under), so it dedupes those progressive
-duplicates down to one variant and reports its quality as `"original"`
-rather than inventing a resolution number by borrowing it from an
-unrelated DASH stream. `author.username`/`author.displayName` come
-straight from yt-dlp's own `channel`/`uploader` fields (Instagram's
-extractor — unlike X's — reliably exposes these); `author.avatar` is
-never populated because yt-dlp doesn't expose one. `duration` is also
-typically absent — verified `null` across every real Reel checked while
-building this.
+`/share/` links carry an opaque code yt-dlp doesn't accept, so AnyDrop
+follows their redirect itself (Instagram hosts only) to the real post URL,
+falling back to the page's canonical link. **Caveat:** no real `/share/`
+link was available to test this against while it was written; if it can't
+find the post, the error tells the user to use "Copy link" instead.
 
 ### TikTok
 
-`TikTokResolver` ([`lib/media/tiktok/resolver.ts`](./web/lib/media/tiktok/resolver.ts))
-shells out to yt-dlp's `TikTok` extractor.
+Accepted: `tiktok.com/@<user>/video/<id>`, the `vm.`/`vt.tiktok.com` and
+`www.tiktok.com/t/<code>` short links (passed through — yt-dlp follows the
+redirect), and legacy `m.tiktok.com/v/<id>.html`, `/share/video/<id>`,
+`/embed/<id>` links (rewritten to `/@/video/<id>`, verified to resolve).
+Photo slideshows get a specific "not supported" message (yt-dlp's TikTok
+extractor only handles videos).
 
-Accepted URL shapes: `tiktok.com/@<user>/video/<id>`,
-`www.tiktok.com/@<user>/video/<id>`, and the `vm.tiktok.com`/`vt.tiktok.com`
-share-link short domains (verified against two real, live short links —
-yt-dlp follows the redirect and resolves the real video internally, so
-XDrop doesn't pre-resolve it itself). Long-form URLs normalize to
-`https://www.tiktok.com/@<user>/video/<id>`.
+TikTok's video CDN sits behind Akamai bot-management requiring a
+JS-challenge cookie only yt-dlp can produce (verified: bare `fetch()` and a
+real browser both `403`). So TikTok media is always a **passthrough**
+reference (see the download API below) that re-runs yt-dlp at download
+time. TikTok must use the standalone yt-dlp build (`yt-dlp_linux`) —
+its JS-challenge step was found to fail deterministically via the zipapp.
 
-TikTok is the one platform where **resolving is not enough to also
-download**. Its progressive (video+audio) formats *do* carry real
-width/height/bitrate (verified against several real videos — unlike
-Instagram, no metadata gap here), but the CDN URL yt-dlp reports sits
-behind Akamai bot-management requiring a JS-challenge-solved cookie.
-Verified empirically: a bare `fetch()` and a full real-browser navigation
-to that exact URL both come back `403`, correct Referer/User-Agent
-included — they only succeed when yt-dlp handles the *entire* request
-itself (a captured-cookie-reuse shortcut was also tried and found
-unreliable: worked once, failed on immediate retry). So instead of the raw
-CDN URL, each `media[].url` XDrop returns is the *source* TikTok page URL
-plus an `xdrop_format` query param — [`lib/media/tiktok/download.ts`](./web/lib/media/tiktok/download.ts)
-recognizes that exact shape and re-invokes yt-dlp at download time,
-streaming its stdout (`-o -`) straight into the HTTP response rather than
-proxying a link that would just 403. See **`GET /api/media/download`**
-below for what this costs (no `Content-Length`/Range support for TikTok
-specifically).
+TikTok also lists its soundtrack as a ready-made MP3, offered as an audio
+variant with no ffmpeg needed. Thumbnails are returned again — the cover
+image CDN (`p16-common-sign.tiktokcdn.com`) was re-checked and serves
+images to a plain fetch, unlike the video CDN.
 
-`author.username`/`author.displayName` come from yt-dlp's `uploader`/
-`channel` fields — note this is the **opposite** mapping from Instagram's
-extractor, where `channel` is the username and `uploader` the display
-name. `duration` is reliably real (unlike Instagram). No `thumbnail`:
-TikTok's thumbnail CDN sits behind the same Akamai protection as the
-video CDN, and re-invoking yt-dlp a second time just for a still image
-wasn't worth the extra latency for an MVP.
+### Facebook
 
-### Not yet supported: Facebook
+Accepted: `/reel/<id>`, `/watch/?v=<id>` (and `/watch/live`,
+`/video.php?v=`), `/<page>/videos/<id>`, `/<page>/posts/<id>`,
+`/groups/<g>/(permalink|posts)/<id>`, `/story.php`/`/permalink.php`, the
+`/share/v/`, `/share/r/` share links and `fb.watch/<code>` (both passed
+through for yt-dlp to follow), on `www.`/`m.`/`web.`/`mbasic.` hosts.
 
-`platform-detector.ts` already recognizes its hostnames (so pasting a
-Facebook link gives a specific, honest "not supported yet" error instead
-of a generic "couldn't resolve this"), but there's no resolver registered
-for it — `resolver-registry.ts` throws a clear `UNSUPPORTED_URL` on
-purpose, rather than a fake/stub resolver that would silently do nothing
-useful.
+Facebook's output (verified on real public videos): `hd`/`sd` progressive
+files with no codec or dimension metadata, plus DASH video-only streams
+and, when the video has sound, a DASH audio stream. `hd`/`sd` are offered
+as **HD**/**SD**; whether they carry sound is inferred from the audio
+stream's presence (checked both ways with ffprobe). With ffmpeg, the best
+DASH video + audio is offered as an HQ merged variant, and MP3 extraction
+works. The CDN (`video.*.fbcdn.net`) doesn't check Referer or cookies
+(verified), so plain files go through the same proxy as Instagram.
+
+Many Facebook videos are only shown to logged-in users; logged-out
+requests for those fail in yt-dlp with "Cannot parse data", which AnyDrop
+reports as "not publicly accessible".
 
 ## How resolution works
 
-None of X, Instagram, or TikTok publish a stable public API for post
-media, so XDrop shells out to [**yt-dlp**](https://github.com/yt-dlp/yt-dlp)
-— the most actively maintained open-source extractor covering all three —
-as a subprocess. This part is shared across every yt-dlp-backed resolver
-([`lib/media/yt-dlp.ts`](./web/lib/media/yt-dlp.ts)); only the
-interpretation of the result is platform-specific:
+None of the platforms publish a stable public API for post media, so AnyDrop
+shells out to yt-dlp — the most actively maintained open-source extractor
+covering all four — as a subprocess
+([`lib/media/yt-dlp.ts`](./web/lib/media/yt-dlp.ts)):
 
-1. `runYtDlp(url)` spawns a bundled yt-dlp binary with `--dump-json`
-   **using an argument array** (`spawn(path, [url, ...flags])`), never a
-   shell string built from user input, with a timeout that sends
-   `SIGTERM` (then `SIGKILL` after a grace period) if yt-dlp hangs.
-2. yt-dlp's platform-specific extractor (`twitter`, `Instagram`, or
-   `TikTok`) resolves the post and returns raw JSON describing every
-   available format (HLS/DASH variants, audio-only tracks, progressive
-   files, storyboards, etc).
-3. Each platform's own `normalizeYtDlpOutput` (in `x/resolver.ts` /
-   `instagram/resolver.ts` / `tiktok/resolver.ts`) filters that down to
-   directly-fetchable, audio-carrying variants and maps them onto the
-   app's generic `ResolvedMedia`/`MediaVariant` shape. Raw yt-dlp fields
-   never reach the API response.
-4. Each resolver also rejects output that didn't actually come from its
-   own platform's extractor — e.g. a tweet that just links a YouTube video
-   gets rejected by `XVideoResolver` rather than silently resolving
-   YouTube content instead.
+1. `runYtDlp(url)` spawns the bundled binary with `--dump-json`, **using an
+   argument array** (never a shell string), in its own process group, with
+   a timeout that sends `SIGTERM` then `SIGKILL`.
+2. yt-dlp's extractor returns one JSON object per video (several for
+   multi-video posts) describing every available format.
+3. Each platform's `normalizeYtDlpOutput` turns that into `ResolvedMedia`.
+   Raw yt-dlp fields never reach the API response.
+4. Each resolver also drops entries from any *other* site's extractor
+   (e.g. a tweet linking a YouTube video), so AnyDrop never resolves — or
+   later proxies — third-party media.
 
-There are actually **two** bundled binaries, picked automatically at
-startup (`lib/media/yt-dlp.ts`), because they trade off differently:
+### Variant kinds and ffmpeg
+
+Every `MediaVariant` has a `kind`:
+
+| kind | what it is | needs |
+|---|---|---|
+| `file` | an existing audio+video file, streamed through the proxy as-is (seekable where the CDN supports ranges) | — |
+| `merged` | best video-only + best audio-only stream, combined on the fly into fragmented MP4 — the highest quality on Instagram/Facebook, and the only option for HLS-only X videos | ffmpeg |
+| `audio` | the soundtrack as MP3 | ffmpeg (except TikTok, which already serves MP3) |
+
+ffmpeg is **optional** ([`lib/media/ffmpeg.ts`](./web/lib/media/ffmpeg.ts)):
+`FFMPEG_PATH`, else `web/bin/ffmpeg`, else `ffmpeg` on PATH. Without it,
+merged/MP3 variants are simply not offered and everything else works as
+before. A merged variant is only offered when it's actually better than
+every plain file (higher known resolution). At equal resolution H.264 is
+preferred over VP9, because it plays everywhere.
+
+Why fragmented MP4: yt-dlp merging to stdout defaults to MPEG-TS, which
+can't carry VP9 — verified, Instagram's 1080p stream came out as an
+unplayable data track. AnyDrop passes ffmpeg
+`-f mp4 -movflags frag_keyframe+empty_moov+default_base_moof` instead.
+
+### The two bundled yt-dlp binaries
 
 | | `bin/yt-dlp` | `bin/yt-dlp_linux` |
 |---|---|---|
-| What it is | The regular Python zipapp (~3MB) | yt-dlp's standalone, self-contained PyInstaller build (~40MB) |
+| What it is | The Python zipapp (~3MB) | Standalone PyInstaller build (~40MB) |
 | Needs `python3` on PATH | Yes | No |
-| Startup cost | Fast (~1-2s) — runs directly | Slower — self-extracts to a fresh temp dir on **every** invocation |
-| Used when | `python3` is on PATH (local dev, most self-hosted deploys) | `python3` isn't available (Vercel serverless functions aren't guaranteed to have it) |
+| Startup cost | Fast (~1-2s) | Slower — self-extracts on every run |
+| Used for | X/Instagram/Facebook when `python3` exists | TikTok always; everything when there's no `python3` (Vercel) |
 
-Neither is committed to the repo (they're 3-40MB binaries, not source) —
-`npm install` inside `web/` fetches them automatically via a `postinstall`
-script ([`web/scripts/fetch-yt-dlp.sh`](./web/scripts/fetch-yt-dlp.sh)).
-**This matters for deployment, not just local dev**: it's what actually
-gets `yt-dlp_linux` into a Vercel build. A deploy built straight from this
-git repo has no `web/bin/` at all — without the `postinstall` fetch, the
-resolver falls through to a bare `yt-dlp` on PATH, which doesn't exist on
-Vercel, and every resolve fails with `VIDEO_RESOLUTION_FAILED` ("The video
-resolver is unavailable"). `scripts/setup-resolver.sh` at the repo root is
-only for explicitly force-refetching later (e.g. to pick up a yt-dlp
-update) — you don't need to run it up front.
+Neither is committed. `npm install` inside `web/` fetches them via
+`postinstall` ([`web/scripts/fetch-yt-dlp.sh`](./web/scripts/fetch-yt-dlp.sh)),
+which now:
 
-An earlier version of this app used only the standalone binary everywhere,
-which turned out to be a real problem locally: repeated timeouts (from
-genuine network slowness) were `SIGKILL`ing that binary before it could
-clean up its self-extracted temp directory, leaking ~80MB per timeout and,
-under any disk pressure, making every subsequent extraction slower —
-compounding into more timeouts. Fixed two ways: prefer the fast zipapp
-whenever `python3` is available, and send `SIGTERM` (with a grace period)
-instead of `SIGKILL` on timeout so the standalone binary gets a chance to
-clean up when it *is* the one in use.
+- resolves the latest release tag once, then downloads the binaries **and
+  verifies each against that release's `SHA2-256SUMS`** — a mismatch aborts
+  without replacing the existing binary;
+- fetches `yt-dlp_linux_aarch64` (saved as `yt-dlp_linux`) on ARM servers.
+
+`npm run update-resolver` force-refetches the latest release. The running
+server picks it up on the next request (every resolve spawns a fresh
+process) — no restart needed.
 
 ## Installation
 
-Prerequisites: Node.js 20+, `curl`.
+Prerequisites: Node.js 20+, `curl`. Optional: `ffmpeg` (for HQ + MP3).
 
 ```bash
 git clone <this repo>
 cd XDrop/web
 
-npm install   # also fetches the yt-dlp binaries — see above
-cp .env.example .env.local
+npm install   # also fetches + verifies the yt-dlp binaries
+cp .env.example .env.local   # optional — everything has defaults
 ```
 
 ## Environment variables
 
-**`web/.env.local`** (all optional — sensible defaults if unset; see
-`.env.example`)
+All optional — see [`web/.env.example`](./web/.env.example).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `YT_DLP_PATH` | *(auto)* | Path to the yt-dlp binary. Defaults to `./bin/yt-dlp` if `python3` is on PATH, else `./bin/yt-dlp_linux`, else `yt-dlp` on PATH |
-| `RESOLVER_TIMEOUT_MS` | `30000` | Kills the yt-dlp subprocess if it hangs. 30s, not 20s, deliberately — real-world network/DNS variance can eat 10-20s even on a warm process |
-| `DOWNLOAD_TIMEOUT_MS` | `45000` | Timeout for the upstream media fetch when streaming/downloading |
+| `YT_DLP_PATH` | *(auto)* | yt-dlp binary — see the table above |
+| `YT_DLP_PROXY` | *(none)* | Proxy for every yt-dlp request (`http://…`, `socks5://…`). The platforms throttle datacenter IPs far more than home connections; this is the fix when it works locally but not on a server |
+| `FFMPEG_PATH` | *(auto)* | ffmpeg binary — enables HQ merged + MP3 variants |
+| `RESOLVER_TIMEOUT_MS` | `30000` | Kills a hung resolve |
+| `DOWNLOAD_TIMEOUT_MS` | `45000` | **Inactivity** timeout for streaming downloads — a long video that keeps streaming is never cut off |
+| `RESOLVE_CACHE_TTL_MS` | `300000` | Reuse a successful resolve (0 disables). Short because IG/FB CDN URLs are signed and expire |
+| `RESOLVE_CACHE_MAX` | `200` | Max cached resolves |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window |
 | `RATE_LIMIT_MAX` | `20` | Max `/resolve` requests per window per IP (`/download` allows 2×) |
 
@@ -263,36 +314,25 @@ cp .env.example .env.local
 
 ```bash
 cd web
-npm run dev      # http://localhost:3000 (or next free port)
-npm run build    # production build (also type-checks)
-npm start         # run the production build locally
-npm test          # vitest suite
+npm run dev          # http://localhost:3000
+npm run build        # production build (also type-checks)
+npm start            # run the production build
+npm test             # unit/route tests — no network, no real yt-dlp
+npm run test:live    # real public posts on every platform (slow, needs network)
+npm run update-resolver   # fetch the latest yt-dlp (checksum-verified)
 ```
-
-Open the printed URL, paste a public X, Instagram Reel, or TikTok video
-URL, click **Fetch Video**.
 
 ## API usage
 
 ### `POST /api/media/resolve`
 
-The primary, platform-agnostic endpoint. Works for any supported
-platform — the request shape never changes; the response's `platform`
-field tells you which resolver handled it.
-
 ```bash
 curl -X POST http://localhost:3000/api/media/resolve \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://x.com/user/status/123456789"}'
-
-curl -X POST http://localhost:3000/api/media/resolve \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.instagram.com/reel/abc123/"}'
-
-curl -X POST http://localhost:3000/api/media/resolve \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.tiktok.com/@user/video/123456789"}'
+  -d '{"url":"Check this out https://vm.tiktok.com/ZMabc123/"}'
 ```
+
+`url` may be a bare link or any text containing one (up to 4000 chars).
 
 Success:
 
@@ -302,17 +342,23 @@ Success:
   "data": {
     "platform": "x",
     "sourceUrl": "https://x.com/user/status/123456789",
+    "id": "123456789",
     "thumbnail": "https://pbs.twimg.com/...",
     "title": "...",
-    "author": { "username": "user" },
+    "author": { "username": "user", "displayName": "User" },
     "duration": 32,
     "media": [
-      { "url": "https://video.twimg.com/...", "quality": "720p", "width": 1280, "height": 720, "bitrate": 1500000, "format": "mp4", "hasAudio": true },
-      { "url": "https://video.twimg.com/...", "quality": "480p", "width": 854,  "height": 480, "bitrate": 900000,  "format": "mp4", "hasAudio": true }
-    ]
+      { "url": "https://video.twimg.com/...", "quality": "720p", "width": 1280, "height": 720, "bitrate": 1500000, "format": "mp4", "hasAudio": true, "kind": "file" },
+      { "url": "https://x.com/user/status/123456789?anydrop_format=hls-audio-128000-Audio&anydrop_audio=mp3", "quality": "Audio", "format": "mp3", "hasAudio": true, "kind": "audio" }
+    ],
+    "items": [ { "index": 1, "media": [ ... ] }, { "index": 2, "media": [ ... ] } ]
   }
 }
 ```
+
+- `media` is always the first video's variants, sorted best-first —
+  single-video consumers can ignore `items`.
+- `items` is present only when the post has more than one video.
 
 Failure (`400`/`404`/`502`/`504` depending on `error.code`):
 
@@ -320,218 +366,163 @@ Failure (`400`/`404`/`502`/`504` depending on `error.code`):
 { "success": false, "error": { "code": "VIDEO_NOT_FOUND", "message": "This post does not contain a video." } }
 ```
 
-A Facebook URL (recognized, not yet implemented) or a genuinely
-unrecognized domain both come back as `400 UNSUPPORTED_URL`, with a
-message telling you which case it was.
-
 Error codes: `INVALID_URL`, `UNSUPPORTED_URL`, `VIDEO_NOT_FOUND`,
 `VIDEO_UNAVAILABLE`, `VIDEO_RESOLUTION_FAILED`, `RESOLVER_TIMEOUT`,
 `DOWNLOAD_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`. (Named `VIDEO_*` from
-when XDrop was X-only — kept as-is rather than renamed for the sake of it;
-they're still accurate, specific failure conditions regardless of which
-platform a resolver is for.)
+when AnyDrop was X-only — kept rather than renamed for the sake of it.)
 
 ### `GET /api/media/download`
 
-Streams a previously-resolved media URL back to the browser without
-buffering it fully in memory, forwarding `Range` requests so the player can
-seek (X and Instagram only — see the TikTok note below).
-
 ```text
-GET /api/media/download?url=<CDN media URL>&quality=720p&mode=inline|attachment
+GET /api/media/download?url=<variant url>&quality=720p&name=<filename base>&mode=inline|attachment
 ```
 
-- `url` **must** be an `https://` URL on an allowlisted CDN host —
-  currently `twimg.com` (X) or `fbcdn.net` (Instagram), each added only
-  after checking it against real resolver output, not guessed. Anything
-  else is rejected with `UNSUPPORTED_URL`. This is a narrow, allowlisted
-  proxy for known CDNs, **not** a general URL fetcher.
-- The `Referer` sent upstream is chosen per-host to match (X's CDN
-  enforces a referrer/hotlink check; Instagram's didn't in testing, but a
-  matching one is sent anyway as the more correct default).
-- `mode=attachment` (default) sets `Content-Disposition: attachment` to
-  force a save-as download; `mode=inline` is used by the `<video>` preview
-  player.
+`url` is a variant's `url` from a resolve, and is one of two shapes —
+anything else is rejected with `UNSUPPORTED_URL`. This is a narrow proxy,
+**not** a general URL fetcher:
 
-This endpoint exists because these CDNs reject a browser loading them
-directly from a third-party page (X's is a hard requirement; see **Known
-limitations**) — see architecture doc §7, Strategy B.
+1. **A CDN file** on an allowlisted host: `twimg.com` (X), `fbcdn.net`
+   (Instagram + Facebook), `tiktokcdn.com` (TikTok thumbnails only). Each
+   was added after checking real resolver output. Streamed without
+   buffering; `Range` is forwarded so the player can seek; redirects are
+   followed manually and re-checked against the allowlist on every hop.
+2. **A passthrough reference** ([`lib/media/passthrough.ts`](./web/lib/media/passthrough.ts)):
+   a post URL plus `anydrop_format` (and optionally `anydrop_item`,
+   `anydrop_audio`), e.g.
+   `https://www.instagram.com/p/DJQJeVQPnI4/?anydrop_format=dash-…v%2Bdash-…a`.
+   Used for TikTok, merged and MP3 variants. Validated strictly: the post
+   URL must already be in that platform's canonical form (so it's never
+   "any page on tiktok.com"), the selector is one or two format ids
+   (`video+audio`) starting with a letter/digit — never a free-form
+   yt-dlp expression or anything flag-shaped — the item is 1–20, and
+   no other params are allowed. yt-dlp's stdout is piped straight into the
+   response with backpressure (a slow client can't make the server buffer
+   a whole video), and if the client disconnects, yt-dlp **and** its
+   ffmpeg child are killed (verified — killing yt-dlp alone left ffmpeg
+   running). No `Content-Length` or seeking for these.
 
-**TikTok is a different shape entirely.** Its `url` isn't a CDN file link
-at all — it's the validated TikTok video page plus an `xdrop_format` query
-param (`https://www.tiktok.com/@user/video/123?xdrop_format=h264_720p-1`).
-`isTikTokPassthroughUrl()` accepts that exact shape *only* (re-validated
-through the same regex the resolver itself uses, plus a strict charset
-check on the format id) — this is not "any tiktok.com URL is a valid media
-reference," and never proxies an arbitrary tiktok.com path.
-`buildTikTokMediaResponse()` re-invokes yt-dlp against that page URL with
-`-f <format_id> -o -`, piping its stdout straight into the response (see
-**TikTok** above for why: the raw CDN URL 403s without a
-challenge-solved cookie only yt-dlp can produce). One consequence: there's
-no `Content-Length` or Range/seek support for TikTok specifically — yt-dlp
-doesn't expose the upstream size before it starts streaming, and there's
-no clean way to ask it for a byte range. The file still downloads/plays
-fine over chunked transfer; a `<video>` element just can't seek ahead of
-what's already buffered.
+`name` is a suggested filename base (the UI sends e.g.
+`tiktok-natgeo-7595589117723954487-720p`); it's reduced to
+`[A-Za-z0-9._-]` server-side. `mode=inline` is used by the preview player.
+
+The UI downloads via `fetch` rather than a plain link, which gives a
+progress indicator (merged/MP3 downloads take several seconds to start)
+and turns a failed download into a readable error instead of a saved JSON
+"video". The trade-off: the file is held in memory until complete — fine
+for social-media-length videos.
 
 ### Legacy: `POST /api/videos/resolve`, `GET /api/videos/download`
 
-Kept working, unchanged, for backward compatibility from when XDrop was
-X-only — the current frontend still calls these. `/api/videos/resolve`
-calls the exact same `MediaService` as `/api/media/resolve` and adapts the
-result back into the old `{ videos: [...] }` shape (no `platform`,
-`author`, or `hasAudio` fields); `/api/videos/download` is a direct
-re-export of the media download handler, since download was already
-platform-agnostic in shape. **New code should use `/api/media/*`
-instead** — the legacy routes exist only so nothing that already depends
-on the old contract breaks.
+Kept, unchanged, for external callers from when AnyDrop was X-only — AnyDrop's
+own frontend uses `/api/media/*` (see
+[`lib/client-api.ts`](./web/lib/client-api.ts)). `/api/videos/resolve`
+calls the same `MediaService` and adapts the result back into the old
+`{ videos: [...] }` shape (first video only); `/api/videos/download` is a
+re-export of the media download handler. **New code should use
+`/api/media/*`.**
 
-## Deploying to Vercel
+## Deploying
+
+### On a VPS (recommended)
+
+A long-running server suits AnyDrop better than serverless: no function time
+limit for long merged downloads, a warm cache, and a single process makes
+the in-memory rate limiter authoritative.
+
+```bash
+sudo apt install -y ffmpeg          # enables HQ + MP3
+cd XDrop/web && npm ci && npm run build
+PORT=3000 npm start                 # behind nginx/Caddy for HTTPS
+```
+
+- HTTPS is required for the share target, install prompt, and Paste button.
+- Make the reverse proxy forward the client IP (`X-Forwarded-For`), which
+  the rate limiter keys on, and not buffer responses (nginx:
+  `proxy_buffering off;`) so long downloads stream.
+- Keep yt-dlp current — the platforms change their sites often. A daily
+  cron is enough, no restart needed:
+  `0 5 * * * cd /path/to/XDrop/web && npm run update-resolver`
+- If resolves fail on the server but work locally, it's almost always the
+  server's IP being throttled — set `YT_DLP_PROXY`.
+
+### On Vercel
 
 ```bash
 vercel --cwd web
 ```
 
-Set the root directory to `web/` in the Vercel project settings (or pass
-`--cwd web` as above). No environment variables are required to deploy —
-all of them have working defaults.
+Root directory `web/`; no environment variables required. Specifics:
 
-A few things specific to running this on Vercel's serverless platform,
-since it's a meaningfully different environment from a normal persistent
-Node server:
+- `postinstall` fetches `yt-dlp_linux` during the build, and
+  [`next.config.ts`](./web/next.config.ts)'s `outputFileTracingIncludes`
+  ships it with the functions (Vercel can't see a runtime `spawn()`).
+- No ffmpeg there by default, so HQ/MP3 variants aren't offered.
+- Routes set `maxDuration = 60`. The Hobby plan's limit may be lower;
+  long downloads (and TikTok's re-invoked yt-dlp) can be cut off — a
+  reason to self-host.
+- The in-memory cache and rate limiter are per instance — best-effort.
+- `app/page.tsx` calls `connection()` so the per-request CSP nonce from
+  [`proxy.ts`](./web/proxy.ts) matches what's served.
 
-- **The resolver binary has to actually reach the deployed function**,
-  which takes two separate steps, both already wired up: `npm install`'s
-  `postinstall` fetches `yt-dlp_linux` into `web/bin/` during Vercel's
-  build (it isn't committed to git — see **How resolution works**
-  above), and [`next.config.ts`](./web/next.config.ts)'s
-  `outputFileTracingIncludes` then makes sure that file is actually
-  included in the deployed function bundle for every route that resolves
-  media, since Vercel's build can't see a runtime `spawn(binaryPath)` call
-  on its own. Skip either step and every resolve fails with
-  `VIDEO_RESOLUTION_FAILED`.
-- **No `python3` dependency.** `yt-dlp_linux` is yt-dlp's standalone,
-  self-contained build — verified to resolve real X and Instagram content
-  with `PATH` cleared entirely. A Vercel Node function isn't guaranteed to
-  have `python3` on PATH, so the regular `yt-dlp` (a Python zipapp) would
-  be a much less reliable choice here.
-- **Function duration limits.** All four routes set
-  `export const maxDuration = 60` (App Router route segment config) —
-  resolving typically takes a few seconds once a function instance is
-  warm — but the *first* invocation on a cold instance is measurably
-  slower (yt-dlp's standalone binary self-extracts on each process spawn;
-  that cost is paid once per warm container, not per request). Vercel's
-  Hobby plan enforces a 10s ceiling regardless of what a route asks for;
-  Pro and above respect the 60s, which comfortably covers a cold start. If
-  you hit `RESOLVER_TIMEOUT` or truncated downloads on Hobby, that's this
-  limit, not a bug — either upgrade the plan or self-host (`npm run build
-  && npm start` behind any Node host) where there's no such ceiling.
-- **In-memory rate limiting resets per cold start** and isn't shared
-  across concurrent instances — a best-effort backstop on serverless, not
-  a hard guarantee (see [`lib/rate-limit.ts`](./web/lib/rate-limit.ts)).
-- **CSP nonces require dynamic rendering.** [`proxy.ts`](./web/proxy.ts)
-  (Next 16's renamed Middleware) issues a fresh CSP nonce per request;
-  `app/page.tsx` calls `connection()` to force per-request rendering so
-  that nonce actually matches what gets served — without it, the page
-  would be statically prerendered once at build time with a stale nonce,
-  and the CSP would silently block the app's own scripts in production.
+## Monitoring platform breakage
+
+[`.github/workflows/live-check.yml`](./.github/workflows/live-check.yml) runs
+`npm run test:live` daily (and on demand) with the newest yt-dlp and
+ffmpeg: it resolves one known public post per platform and checks the
+first chunk of a real download. A red run usually means updating yt-dlp
+on the server, or that a sample post was deleted (swap it in
+[`web/tests-live/platforms.live.test.ts`](./web/tests-live/platforms.live.test.ts)).
+CI runners use datacenter IPs, so an Instagram-only failure that passes
+locally points at IP throttling rather than code.
+
+Unrecognized yt-dlp errors are logged server-side with yt-dlp's stderr
+(see `errorResponse` in [`lib/media/errors.ts`](./web/lib/media/errors.ts)),
+so new failure modes can be added to each platform's
+`classifyResolverFailure`.
 
 ## Known limitations
 
-- **Only public content, on every platform.** XDrop does not, and will
-  not, attempt to bypass private accounts, login walls, age gates, or DRM.
-  If yt-dlp can't resolve a post without authenticating, XDrop reports
-  `VIDEO_UNAVAILABLE`. For Instagram specifically, yt-dlp can't actually
-  distinguish "this post doesn't exist" from "this post exists but
-  requires login" — both produce the same "empty media response" from
-  Instagram's side — so both map to the same honest `VIDEO_UNAVAILABLE`
-  rather than guessing which one it is.
-- **Instagram support is Reels only.** Regular posts (`/p/...`) and IGTV
-  (`/tv/...`) are rejected as unsupported, not attempted.
-- **Facebook is recognized, not resolvable.** Pasting a Facebook link
-  gives a specific "not supported yet" error rather than a generic
-  failure — there's no resolver registered for it yet.
-- **Instagram media quality is reported as `"original"`, not a resolution
-  number.** Unlike X and TikTok, Instagram's yt-dlp output doesn't attach
-  real width/height to the one progressive (audio+video) file it actually
-  serves — see **Supported platforms** above for why. XDrop doesn't invent
-  a resolution by borrowing one from an unrelated stream.
-- **TikTok specifically requires the standalone yt-dlp binary, never the
-  zipapp — this is enforced in code, not just a preference.** Both X and
-  Instagram work fine with either bundled binary, but TikTok's extractor
-  runs a "Solving JS challenge using native Python implementation" step,
-  and that step was found, reproduced, and confirmed *deterministically* —
-  same machine, same video, tested back-to-back, repeatedly — to fail via
-  the zipapp (which shells out to whatever `python3` happens to be on
-  PATH) while succeeding reliably via the standalone build (which bundles
-  its own Python). `ytDlpStandalonePath` in
-  [`lib/media/yt-dlp.ts`](./web/lib/media/yt-dlp.ts) is what TikTok's
-  resolver and download path use instead of the auto-selected default —
-  don't change that without re-testing against real TikTok content.
-- **TikTok still shows more occasional flakiness than X or Instagram even
-  with the correct binary** — a real single-video resolve/preview/download
-  sequence run in quick succession sometimes has one step fail even though
-  an isolated retry of that same step succeeds immediately after. Akamai's
-  bot-management is the most likely cause, but this wasn't narrowed down
-  further. Worth a retry if a TikTok request fails; not something the app
-  can fully paper over.
-- **TikTok downloads have no `Content-Length` or Range/seek support** —
-  see **`GET /api/media/download`** above for why (yt-dlp re-invocation,
-  not a CDN fetch, for that platform specifically).
-- **TikTok never returns a `thumbnail`** — its thumbnail CDN sits behind
-  the same Akamai protection as the video CDN.
-- **Playback/download always go through the backend proxy, not directly to
-  the CDN.** X's CDN enforces a referrer check that a third-party page
-  fails, and TikTok's requires a challenge-solved cookie a browser can
-  never provide on its own, so both the `<video>` preview and the Download
-  button use `GET /api/media/download` (Strategy B from the architecture
-  doc) rather than linking straight to the resolved media URL
-  (Strategy A). Applied uniformly to Instagram too, for consistency, even
-  though its CDN didn't strictly require it in testing.
-- **yt-dlp is an external, frequently-updated dependency.** If a platform
-  changes something and the bundled yt-dlp release falls behind,
-  resolution for that platform can start failing until it's updated
-  (`./scripts/setup-resolver.sh` again) — this is exactly why the
-  `MediaResolver` interface exists.
-- **No persistence.** Nothing is stored server-side; every request
-  re-resolves from scratch. There's no download history, caching, or
-  retry queue. (The frontend does keep a small "recent lookups" list, but
-  that's `localStorage` only — see [`lib/recent.ts`](./web/lib/recent.ts).)
-- **Vercel Hobby's 10s function timeout** can be tight for a slow
-  resolution or a larger media download — see **Deploying to Vercel**.
-- **Resolution time depends on real network conditions to the target
-  platform**, same as the yt-dlp CLI always had. The app doesn't fetch any
-  other external resource at request time (no Google Fonts, no
-  third-party APIs), specifically so a resolve is the only thing that can
-  be slow.
-- The frontend is still X-branded ("XDrop") and its URL input/placeholder
-  copy is still X-specific — it now reads `author.username` generically
-  (works for any platform, not an X-only heuristic) but hasn't had a
-  multi-platform visual/copy pass yet; that's deliberately out of scope
-  until more platforms land.
+- **Only public content.** AnyDrop doesn't log in and won't bypass private
+  accounts, login walls, age gates, or DRM. Content a platform only shows
+  to logged-in users (Instagram Stories, many Facebook videos, age-gated
+  posts) is reported as `VIDEO_UNAVAILABLE`.
+- **TikTok photo slideshows** aren't supported (yt-dlp doesn't extract
+  them).
+- **Instagram `/share/` links** are handled by following their redirect,
+  which couldn't be verified against a real link — see above.
+- **Merged/MP3/TikTok downloads have no `Content-Length` or seeking** —
+  they're produced on the fly. They also take a few seconds to start.
+- **Merged variants may be VP9** when the platform's best stream is VP9
+  (H.264 is preferred when available at the same resolution). VP9-in-MP4
+  plays in Chrome/Firefox/Android; older iPhones may not play it — pick
+  the plain "Original"/"HD" file there.
+- **Facebook "HD"/"SD" and Instagram "Original" carry no resolution** in
+  yt-dlp's output; AnyDrop doesn't invent one.
+- **TikTok shows occasional flakiness** (likely Akamai bot-management).
+  The service retries once automatically; a manual retry usually works.
+- **Downloads in the UI are buffered in browser memory** until complete
+  (for progress + error handling) — fine for social videos, not meant for
+  hour-long ones.
+- **yt-dlp is an external, frequently-updated dependency** — keep it
+  current (see Deploying).
+- **No persistence.** No accounts or server-side history; the "Recent"
+  list is `localStorage` only.
 
 ## Testing
 
 ```bash
 cd web
-npm test
+npm test           # 170+ unit/route tests, no network
+npm run test:live  # real posts on X, Instagram, TikTok, Facebook
 ```
 
-Covers URL validation (valid/invalid/unsupported, generic and per-platform,
-including TikTok's `vm.`/`vt.` short links), platform detection (all 4
-recognized platforms + hostname-spoofing attempts + malformed URLs), the
-resolver registry (X, Instagram, and TikTok resolve to real resolvers;
-Facebook fails cleanly), `MediaService` orchestration (including
-dispatching a TikTok short link), resolver-response normalization for X,
-Instagram, and TikTok (pure functions, no real yt-dlp process invoked in
-the test suite), TikTok's `xdrop_format` passthrough-URL validation, the
-shared error-response mapping, and every `/api/media/*` and legacy
-`/api/videos/*` route handler (success, validation errors, resolver
-failures, and the download SSRF allowlist — including checks that
-Instagram's CDN host and a well-formed TikTok passthrough URL are
-accepted, and that an unsafe/missing `xdrop_format` is rejected) — called
-directly with a constructed `NextRequest` and a mocked resolver where
-appropriate, no network calls required for most of the suite. Real
-yt-dlp resolution and download against live public X, Instagram, and
-TikTok content is verified manually (see git history / PR notes), not in
-CI.
+`npm test` covers: link extraction from share text, platform detection
+(including lookalike hosts), every platform's URL normalization (and that
+canonical forms are stable), resolver normalization for all four platforms
+against fixtures shaped from real yt-dlp output (multi-video tweets, GIFs,
+HLS-only videos, Instagram carousels and 1080p merges, Facebook hd/sd and
+silent videos, TikTok's MP3), merged/MP3 variant selection, passthrough
+validation (rejecting flag-shaped selectors, free-form expressions,
+non-canonical URLs, foreign hosts), filename sanitizing, the service's
+cache/de-duplication/retry, and every API route. ffmpeg and the cache are
+disabled in the test environment so results don't depend on the machine.

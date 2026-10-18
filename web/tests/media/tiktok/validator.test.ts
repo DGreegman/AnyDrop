@@ -58,4 +58,27 @@ describe("normalizeTikTokUrl", () => {
       expect((err as AppError).code).toBe("UNSUPPORTED_URL");
     }
   });
+
+  it("passes www.tiktok.com/t/<code> short links through unchanged", () => {
+    expect(normalizeTikTokUrl("https://www.tiktok.com/t/ZTabc123/")).toBe("https://www.tiktok.com/t/ZTabc123/");
+  });
+
+  it("rewrites id-only legacy/embed shapes to the canonical /@/video/<id> form", () => {
+    const canonical = "https://www.tiktok.com/@/video/7595589117723954487";
+    expect(normalizeTikTokUrl("https://m.tiktok.com/v/7595589117723954487.html")).toBe(canonical);
+    expect(normalizeTikTokUrl("https://www.tiktok.com/share/video/7595589117723954487")).toBe(canonical);
+    expect(normalizeTikTokUrl("https://www.tiktok.com/embed/v2/7595589117723954487")).toBe(canonical);
+    // ...and that form is itself stable.
+    expect(normalizeTikTokUrl(canonical)).toBe(canonical);
+  });
+
+  it("rejects photo slideshows with a specific message", () => {
+    try {
+      normalizeTikTokUrl("https://www.tiktok.com/@someone/photo/7400000000000000000");
+      throw new Error("expected to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      expect((err as AppError).message).toMatch(/slideshow/);
+    }
+  });
 });
