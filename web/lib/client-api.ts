@@ -71,7 +71,7 @@ export async function resolveVideo(url: string): Promise<ResolvedMedia> {
     // callers only ever handle one error type.
     throw new ApiRequestError({
       code: "NETWORK_ERROR",
-      message: "Could not reach the XDrop server. Please try again.",
+      message: "Could not reach the AnyDrop server. Please try again.",
     });
   }
 
@@ -124,7 +124,7 @@ export async function downloadWithProgress(
     if ((err as Error)?.name === "AbortError") throw err;
     throw new ApiRequestError({
       code: "NETWORK_ERROR",
-      message: "Could not reach the XDrop server. Please try again.",
+      message: "Could not reach the AnyDrop server. Please try again.",
     });
   }
 
@@ -157,7 +157,7 @@ export async function downloadWithProgress(
 
   const type = res.headers.get("content-type") ?? "application/octet-stream";
   const filename =
-    res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "xdrop-video.mp4";
+    res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "anydrop-video.mp4";
 
   const blobUrl = URL.createObjectURL(new Blob(chunks, { type }));
   const a = document.createElement("a");

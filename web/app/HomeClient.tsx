@@ -260,10 +260,10 @@ export default function HomeClient() {
   return (
     <div className="page">
       <div className="hero">
-        <div className="wordmark">XDrop</div>
+        <div className="wordmark">AnyDrop</div>
         <h1>Save it. Keep it.</h1>
         <p className="tagline">Download videos from X, Instagram, TikTok and Facebook.</p>
-        <p className="supporting">Paste a link to a public post — or share it straight to XDrop.</p>
+        <p className="supporting">Paste a link to a public post — or share it straight to AnyDrop.</p>
         <InstallPrompt />
       </div>
 
@@ -299,7 +299,7 @@ export default function HomeClient() {
               {detectedUrl !== url.trim() && " (found in the text)"}
             </>
           ) : detectedUrl ? (
-            "That site isn't supported — XDrop works with X, Instagram, TikTok and Facebook."
+            "That site isn't supported — AnyDrop works with X, Instagram, TikTok and Facebook."
           ) : (
             "That doesn't look like a link yet."
           ))}
@@ -466,8 +466,8 @@ export default function HomeClient() {
 
       <footer className="tips">
         <p>
-          <strong>Tip:</strong> on Android, install XDrop and it appears in the Share menu of the
-          TikTok, Instagram, X and Facebook apps. On iPhone, use the “Send to XDrop” Shortcut (see the
+          <strong>Tip:</strong> on Android, install AnyDrop and it appears in the Share menu of the
+          TikTok, Instagram, X and Facebook apps. On iPhone, use the “Send to AnyDrop” Shortcut (see the
           README) for the same thing.
         </p>
         <p>Only public posts can be downloaded.</p>

@@ -7,7 +7,7 @@ const parse = (url: string) => parsePassthroughUrl(new URL(url));
 describe("parsePassthroughUrl", () => {
   it("accepts the TikTok shape the resolver has always produced", () => {
     expect(
-      parse("https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=bytevc1_720p_650528-0")
+      parse("https://www.tiktok.com/@natgeo/video/7595589117723954487?anydrop_format=bytevc1_720p_650528-0")
     ).toEqual({
       platform: "tiktok",
       pageUrl: "https://www.tiktok.com/@natgeo/video/7595589117723954487",
@@ -19,27 +19,27 @@ describe("parsePassthroughUrl", () => {
 
   it("accepts merged (video+audio) selectors, items, and audio modes on every platform", () => {
     expect(
-      parse("https://www.instagram.com/p/DJQJeVQPnI4/?xdrop_format=dash-670913965512136v%2Bdash-1337347094519360a")
+      parse("https://www.instagram.com/p/DJQJeVQPnI4/?anydrop_format=dash-670913965512136v%2Bdash-1337347094519360a")
     ).toMatchObject({ platform: "instagram", formatSpec: "dash-670913965512136v+dash-1337347094519360a" });
     expect(
-      parse("https://x.com/primevideouk/status/1578401165338976258?xdrop_format=hls-audio-128000-Audio&xdrop_item=2&xdrop_audio=mp3")
+      parse("https://x.com/primevideouk/status/1578401165338976258?anydrop_format=hls-audio-128000-Audio&anydrop_item=2&anydrop_audio=mp3")
     ).toMatchObject({ platform: "x", item: 2, audio: "mp3" });
     expect(
-      parse("https://www.facebook.com/watch/?v=647537299265662&xdrop_format=hd&xdrop_audio=mp3")
+      parse("https://www.facebook.com/watch/?v=647537299265662&anydrop_format=hd&anydrop_audio=mp3")
     ).toMatchObject({ platform: "facebook", pageUrl: "https://www.facebook.com/watch/?v=647537299265662" });
   });
 
   it.each([
     ["no format selector", "https://www.tiktok.com/@natgeo/video/1"],
-    ["a flag-shaped selector", "https://www.tiktok.com/@natgeo/video/1?xdrop_format=-rm%20-rf"],
-    ["a free-form selector expression", "https://x.com/a/status/1?xdrop_format=best%5Bheight%3C720%5D"],
-    ["more than one '+'", "https://x.com/a/status/1?xdrop_format=a%2Bb%2Bc"],
-    ["an out-of-range item", "https://x.com/a/status/1?xdrop_format=hd&xdrop_item=99"],
-    ["an unknown audio mode", "https://x.com/a/status/1?xdrop_format=hd&xdrop_audio=wav"],
-    ["a non-canonical page URL (extra params)", "https://x.com/a/status/1?s=20&xdrop_format=http-832"],
-    ["a non-canonical page URL (other path)", "https://www.tiktok.com/@natgeo?xdrop_format=audio"],
-    ["an unknown host", "https://example.com/a/status/1?xdrop_format=hd"],
-    ["a lookalike host", "https://x.com.evil.example/a/status/1?xdrop_format=hd"],
+    ["a flag-shaped selector", "https://www.tiktok.com/@natgeo/video/1?anydrop_format=-rm%20-rf"],
+    ["a free-form selector expression", "https://x.com/a/status/1?anydrop_format=best%5Bheight%3C720%5D"],
+    ["more than one '+'", "https://x.com/a/status/1?anydrop_format=a%2Bb%2Bc"],
+    ["an out-of-range item", "https://x.com/a/status/1?anydrop_format=hd&anydrop_item=99"],
+    ["an unknown audio mode", "https://x.com/a/status/1?anydrop_format=hd&anydrop_audio=wav"],
+    ["a non-canonical page URL (extra params)", "https://x.com/a/status/1?s=20&anydrop_format=http-832"],
+    ["a non-canonical page URL (other path)", "https://www.tiktok.com/@natgeo?anydrop_format=audio"],
+    ["an unknown host", "https://example.com/a/status/1?anydrop_format=hd"],
+    ["a lookalike host", "https://x.com.evil.example/a/status/1?anydrop_format=hd"],
   ])("rejects %s", (_label, url) => {
     expect(parse(url)).toBeNull();
   });
@@ -54,7 +54,7 @@ describe("safeFilename", () => {
   });
 
   it("falls back to the quality label when no name is given", () => {
-    expect(safeFilename("720p")).toBe("xdrop-720p.mp4");
-    expect(safeFilename(undefined, "///")).toBe("xdrop-video.mp4");
+    expect(safeFilename("720p")).toBe("anydrop-720p.mp4");
+    expect(safeFilename(undefined, "///")).toBe("anydrop-video.mp4");
   });
 });

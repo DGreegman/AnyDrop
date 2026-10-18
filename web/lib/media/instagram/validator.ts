@@ -1,6 +1,6 @@
 import { AppError } from "../errors";
 
-// Instagram post URLs XDrop handles, each optionally prefixed with the
+// Instagram post URLs AnyDrop handles, each optionally prefixed with the
 // author's username (Instagram links both ways):
 //   /reel/<shortcode>/    /reels/<shortcode>/   Reels
 //   /p/<shortcode>/                             regular posts (single
@@ -19,7 +19,7 @@ const POST_PATH_RE = /^\/(?:[A-Za-z0-9_.]+\/)?(reels?|p|tv)\/([A-Za-z0-9_-]+)\/?
  * that).
  *
  * Stories are rejected with a specific message: Instagram only serves
- * them to logged-in accounts, and XDrop never authenticates.
+ * them to logged-in accounts, and AnyDrop never authenticates.
  *
  * Assumes `url` is already a well-formed http(s) URL on an Instagram
  * hostname — platform-detector.ts guarantees that before this is ever
@@ -31,7 +31,7 @@ export function normalizeInstagramUrl(url: string): string {
   if (/^\/stories\//.test(parsed.pathname)) {
     throw new AppError(
       "UNSUPPORTED_URL",
-      "Instagram Stories are only visible to logged-in accounts, so XDrop can't download them."
+      "Instagram Stories are only visible to logged-in accounts, so AnyDrop can't download them."
     );
   }
 

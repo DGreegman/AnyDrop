@@ -1,8 +1,11 @@
-# XDrop
+# AnyDrop
 
-XDrop is a small, stateless web app that resolves the video(s) in a public
+AnyDrop is a small, stateless web app that resolves the video(s) in a public
 social post, shows the available qualities, and lets you play or download
 them — or share a post straight to it from the phone's share sheet.
+
+_Formerly XDrop — renamed once it grew beyond X; the repository and the
+original design doc still use the old name._
 
 ```text
 Paste a link (or share text containing one) / share from an app
@@ -103,7 +106,7 @@ for "not found", "private", or a timeout).
   HTTPS or localhost only); normal long-press paste still works where the
   browser doesn't allow it.
 - **Share target (Android).** [`manifest.ts`](./web/app/manifest.ts)
-  declares a Web Share Target. Once XDrop is installed ("Install app"
+  declares a Web Share Target. Once AnyDrop is installed ("Install app"
   button in the page, or the browser's "Add to Home screen"), it appears in
   the share sheet of the TikTok/Instagram/X/Facebook apps. Sharing opens
   `/?title=…&text=…&url=…`; the page searches all three (apps disagree
@@ -112,20 +115,20 @@ for "not found", "private", or a timeout).
   on Android. **iOS doesn't support share targets for web apps** — use the
   Shortcut below.
 
-### iPhone: "Send to XDrop" Shortcut
+### iPhone: "Send to AnyDrop" Shortcut
 
 The page handles `/?url=<link>` exactly like a share, so an Apple Shortcut
 gives iPhone users the same one-tap flow:
 
-1. Open **Shortcuts** → **+** → name it **Send to XDrop**.
+1. Open **Shortcuts** → **+** → name it **Send to AnyDrop**.
 2. Tap the **ⓘ** (details) → enable **Show in Share Sheet**; set *Receive*
    to **URLs** and **Text**.
 3. Add action **URL Encode** (input: *Shortcut Input*).
-4. Add action **Text**: `https://<your-xdrop-host>/?url=` followed by the
+4. Add action **Text**: `https://<your-anydrop-host>/?url=` followed by the
    *URL Encoded Text* variable.
 5. Add action **Open URLs** (input: the Text from step 4).
 
-Then: Share → **Send to XDrop** from any app.
+Then: Share → **Send to AnyDrop** from any app.
 
 ## Supported platforms
 
@@ -169,7 +172,7 @@ resolution); with ffmpeg, the best DASH video + audio is offered as an
 progressive file is smaller). Carousels are split into items; carousel
 videos Instagram marks as silent are kept and labelled "no sound".
 
-`/share/` links carry an opaque code yt-dlp doesn't accept, so XDrop
+`/share/` links carry an opaque code yt-dlp doesn't accept, so AnyDrop
 follows their redirect itself (Instagram hosts only) to the real post URL,
 falling back to the page's canonical link. **Caveat:** no real `/share/`
 link was available to test this against while it was written; if it can't
@@ -214,12 +217,12 @@ works. The CDN (`video.*.fbcdn.net`) doesn't check Referer or cookies
 (verified), so plain files go through the same proxy as Instagram.
 
 Many Facebook videos are only shown to logged-in users; logged-out
-requests for those fail in yt-dlp with "Cannot parse data", which XDrop
+requests for those fail in yt-dlp with "Cannot parse data", which AnyDrop
 reports as "not publicly accessible".
 
 ## How resolution works
 
-None of the platforms publish a stable public API for post media, so XDrop
+None of the platforms publish a stable public API for post media, so AnyDrop
 shells out to yt-dlp — the most actively maintained open-source extractor
 covering all four — as a subprocess
 ([`lib/media/yt-dlp.ts`](./web/lib/media/yt-dlp.ts)):
@@ -232,7 +235,7 @@ covering all four — as a subprocess
 3. Each platform's `normalizeYtDlpOutput` turns that into `ResolvedMedia`.
    Raw yt-dlp fields never reach the API response.
 4. Each resolver also drops entries from any *other* site's extractor
-   (e.g. a tweet linking a YouTube video), so XDrop never resolves — or
+   (e.g. a tweet linking a YouTube video), so AnyDrop never resolves — or
    later proxies — third-party media.
 
 ### Variant kinds and ffmpeg
@@ -254,7 +257,7 @@ preferred over VP9, because it plays everywhere.
 
 Why fragmented MP4: yt-dlp merging to stdout defaults to MPEG-TS, which
 can't carry VP9 — verified, Instagram's 1080p stream came out as an
-unplayable data track. XDrop passes ffmpeg
+unplayable data track. AnyDrop passes ffmpeg
 `-f mp4 -movflags frag_keyframe+empty_moov+default_base_moof` instead.
 
 ### The two bundled yt-dlp binaries
@@ -346,7 +349,7 @@ Success:
     "duration": 32,
     "media": [
       { "url": "https://video.twimg.com/...", "quality": "720p", "width": 1280, "height": 720, "bitrate": 1500000, "format": "mp4", "hasAudio": true, "kind": "file" },
-      { "url": "https://x.com/user/status/123456789?xdrop_format=hls-audio-128000-Audio&xdrop_audio=mp3", "quality": "Audio", "format": "mp3", "hasAudio": true, "kind": "audio" }
+      { "url": "https://x.com/user/status/123456789?anydrop_format=hls-audio-128000-Audio&anydrop_audio=mp3", "quality": "Audio", "format": "mp3", "hasAudio": true, "kind": "audio" }
     ],
     "items": [ { "index": 1, "media": [ ... ] }, { "index": 2, "media": [ ... ] } ]
   }
@@ -366,7 +369,7 @@ Failure (`400`/`404`/`502`/`504` depending on `error.code`):
 Error codes: `INVALID_URL`, `UNSUPPORTED_URL`, `VIDEO_NOT_FOUND`,
 `VIDEO_UNAVAILABLE`, `VIDEO_RESOLUTION_FAILED`, `RESOLVER_TIMEOUT`,
 `DOWNLOAD_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`. (Named `VIDEO_*` from
-when XDrop was X-only — kept rather than renamed for the sake of it.)
+when AnyDrop was X-only — kept rather than renamed for the sake of it.)
 
 ### `GET /api/media/download`
 
@@ -384,9 +387,9 @@ anything else is rejected with `UNSUPPORTED_URL`. This is a narrow proxy,
    buffering; `Range` is forwarded so the player can seek; redirects are
    followed manually and re-checked against the allowlist on every hop.
 2. **A passthrough reference** ([`lib/media/passthrough.ts`](./web/lib/media/passthrough.ts)):
-   a post URL plus `xdrop_format` (and optionally `xdrop_item`,
-   `xdrop_audio`), e.g.
-   `https://www.instagram.com/p/DJQJeVQPnI4/?xdrop_format=dash-…v%2Bdash-…a`.
+   a post URL plus `anydrop_format` (and optionally `anydrop_item`,
+   `anydrop_audio`), e.g.
+   `https://www.instagram.com/p/DJQJeVQPnI4/?anydrop_format=dash-…v%2Bdash-…a`.
    Used for TikTok, merged and MP3 variants. Validated strictly: the post
    URL must already be in that platform's canonical form (so it's never
    "any page on tiktok.com"), the selector is one or two format ids
@@ -410,7 +413,7 @@ for social-media-length videos.
 
 ### Legacy: `POST /api/videos/resolve`, `GET /api/videos/download`
 
-Kept, unchanged, for external callers from when XDrop was X-only — XDrop's
+Kept, unchanged, for external callers from when AnyDrop was X-only — AnyDrop's
 own frontend uses `/api/media/*` (see
 [`lib/client-api.ts`](./web/lib/client-api.ts)). `/api/videos/resolve`
 calls the same `MediaService` and adapts the result back into the old
@@ -422,7 +425,7 @@ re-export of the media download handler. **New code should use
 
 ### On a VPS (recommended)
 
-A long-running server suits XDrop better than serverless: no function time
+A long-running server suits AnyDrop better than serverless: no function time
 limit for long merged downloads, a warm cache, and a single process makes
 the in-memory rate limiter authoritative.
 
@@ -479,7 +482,7 @@ so new failure modes can be added to each platform's
 
 ## Known limitations
 
-- **Only public content.** XDrop doesn't log in and won't bypass private
+- **Only public content.** AnyDrop doesn't log in and won't bypass private
   accounts, login walls, age gates, or DRM. Content a platform only shows
   to logged-in users (Instagram Stories, many Facebook videos, age-gated
   posts) is reported as `VIDEO_UNAVAILABLE`.
@@ -494,7 +497,7 @@ so new failure modes can be added to each platform's
   plays in Chrome/Firefox/Android; older iPhones may not play it — pick
   the plain "Original"/"HD" file there.
 - **Facebook "HD"/"SD" and Instagram "Original" carry no resolution** in
-  yt-dlp's output; XDrop doesn't invent one.
+  yt-dlp's output; AnyDrop doesn't invent one.
 - **TikTok shows occasional flakiness** (likely Akamai bot-management).
   The service retries once automatically; a manual retry usually works.
 - **Downloads in the UI are buffered in browser memory** until complete

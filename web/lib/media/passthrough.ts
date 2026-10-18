@@ -5,7 +5,7 @@ import { AppError } from "./errors";
 import { config } from "./config";
 import { Platform } from "./types";
 import { platformForHostname } from "./platforms";
-import { AudioMode, XDROP_AUDIO_PARAM, XDROP_FORMAT_PARAM, XDROP_ITEM_PARAM } from "./formats";
+import { AudioMode, ANYDROP_AUDIO_PARAM, ANYDROP_FORMAT_PARAM, ANYDROP_ITEM_PARAM } from "./formats";
 import { normalizeXUrl } from "./x/validator";
 import { normalizeInstagramUrl } from "./instagram/validator";
 import { normalizeTikTokUrl } from "./tiktok/validator";
@@ -37,7 +37,7 @@ const FORMAT_PART = String.raw`[A-Za-z0-9][A-Za-z0-9_.-]{0,99}`;
 const FORMAT_SPEC_RE = new RegExp(`^${FORMAT_PART}(?:\\+${FORMAT_PART})?$`);
 const ITEM_RE = /^(?:[1-9]|1\d|20)$/; // 1..20, matching the resolvers' playlist cap
 const AUDIO_MODES: ReadonlySet<string> = new Set<AudioMode>(["mp3", "copy"]);
-const PASSTHROUGH_PARAMS = new Set([XDROP_FORMAT_PARAM, XDROP_ITEM_PARAM, XDROP_AUDIO_PARAM]);
+const PASSTHROUGH_PARAMS = new Set([ANYDROP_FORMAT_PARAM, ANYDROP_ITEM_PARAM, ANYDROP_AUDIO_PARAM]);
 
 const NORMALIZERS: Record<Platform, (url: string) => string> = {
   x: normalizeXUrl,
@@ -63,24 +63,24 @@ export interface PassthroughRequest {
 
 /**
  * Parses and strictly validates a passthrough reference. Returns null for
- * anything that isn't exactly the shape XDrop's own resolvers generate:
+ * anything that isn't exactly the shape AnyDrop's own resolvers generate:
  *   - a recognized platform host,
  *   - a post URL that is *already* in that platform's canonical form
  *     (normalizing it is a no-op — so this is never "any page on
  *     tiktok.com", only a URL a resolver could have produced),
- *   - a safe format selector, and only XDrop's own extra params.
+ *   - a safe format selector, and only AnyDrop's own extra params.
  */
 export function parsePassthroughUrl(url: URL): PassthroughRequest | null {
   const platform = platformForHostname(url.hostname);
   if (!platform) return null;
 
-  const formatSpec = url.searchParams.get(XDROP_FORMAT_PARAM);
+  const formatSpec = url.searchParams.get(ANYDROP_FORMAT_PARAM);
   if (!formatSpec || !FORMAT_SPEC_RE.test(formatSpec)) return null;
 
-  const itemRaw = url.searchParams.get(XDROP_ITEM_PARAM);
+  const itemRaw = url.searchParams.get(ANYDROP_ITEM_PARAM);
   if (itemRaw !== null && !ITEM_RE.test(itemRaw)) return null;
 
-  const audioRaw = url.searchParams.get(XDROP_AUDIO_PARAM);
+  const audioRaw = url.searchParams.get(ANYDROP_AUDIO_PARAM);
   if (audioRaw !== null && !AUDIO_MODES.has(audioRaw)) return null;
 
   const page = new URL(url.toString());

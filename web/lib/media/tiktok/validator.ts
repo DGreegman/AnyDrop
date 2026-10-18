@@ -33,7 +33,7 @@ const T_SHORT_PATH_RE = /^\/t\/[A-Za-z0-9_-]+\/?$/;
  * reliable path shape to canonicalize. Those are passed through
  * unchanged: yt-dlp's TikTok extractor follows the redirect and extracts
  * the real video internally (verified against two real, live short
- * links) — there's no benefit to XDrop pre-resolving the redirect itself.
+ * links) — there's no benefit to AnyDrop pre-resolving the redirect itself.
  * Idempotent (passthrough.ts relies on that).
  *
  * Assumes `url` is already a well-formed http(s) URL on a TikTok

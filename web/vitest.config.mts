@@ -10,7 +10,7 @@ export default defineConfig({
       // ffmpeg (so merged/MP3 variants only appear where a test opts in
       // with canMerge: true) and no resolve cache (route tests share one
       // module-level MediaService across cases).
-      FFMPEG_PATH: "/nonexistent/xdrop-test-ffmpeg",
+      FFMPEG_PATH: "/nonexistent/anydrop-test-ffmpeg",
       RESOLVE_CACHE_TTL_MS: "0",
     },
   },

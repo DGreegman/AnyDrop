@@ -22,7 +22,7 @@ describe.each([
     // depending on a real, ever-changing signed Instagram CDN URL.
     const url =
       `http://localhost${path}?url=` +
-      encodeURIComponent("https://this-host-does-not-exist-xdrop-test.fna.fbcdn.net/video.mp4");
+      encodeURIComponent("https://this-host-does-not-exist-anydrop-test.fna.fbcdn.net/video.mp4");
     const res = await handler(new NextRequest(url));
 
     expect(res.status).not.toBe(400);
@@ -30,7 +30,7 @@ describe.each([
     expect(body.error.code).toBe("DOWNLOAD_FAILED");
   });
 
-  it("rejects a tiktok.com URL missing the xdrop_format passthrough param", async () => {
+  it("rejects a tiktok.com URL missing the anydrop_format passthrough param", async () => {
     // A bare tiktok.com video URL is not itself a fetchable media file —
     // it must carry the format selector this app's own resolver attaches.
     const url =
@@ -47,7 +47,7 @@ describe.each([
     const url =
       `http://localhost${path}?url=` +
       encodeURIComponent(
-        "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=-rm%20-rf"
+        "https://www.tiktok.com/@natgeo/video/7595589117723954487?anydrop_format=-rm%20-rf"
       );
     const res = await handler(new NextRequest(url));
 
@@ -60,7 +60,7 @@ describe.each([
     const url =
       `http://localhost${path}?url=` +
       encodeURIComponent(
-        "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=xdrop-test-nonexistent-format"
+        "https://www.tiktok.com/@natgeo/video/7595589117723954487?anydrop_format=anydrop-test-nonexistent-format"
       );
     const res = await handler(new NextRequest(url));
 

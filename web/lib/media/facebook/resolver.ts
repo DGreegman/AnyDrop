@@ -132,7 +132,7 @@ function normalizeItem(
 
 /**
  * Normalizes yt-dlp's raw --dump-json output for a Facebook video (or a
- * post holding several) into XDrop's generic ResolvedMedia shape.
+ * post holding several) into AnyDrop's generic ResolvedMedia shape.
  * Exported (pure, no I/O) for tests; `canMerge` defaults to whether
  * ffmpeg is available.
  */

@@ -44,12 +44,12 @@ describe("normalizeYtDlpOutput (Facebook)", () => {
     const result = normalizeYtDlpOutput(sourceUrl, raw, { canMerge: true });
     expect(result.media.map((v) => v.kind)).toEqual(["merged", "file", "file", "audio"]);
     expect(result.media[0]).toMatchObject({ quality: "1280p", width: 720, height: 1280, hasAudio: true });
-    expect(new URL(result.media[0].url).searchParams.get("xdrop_format")).toBe(
+    expect(new URL(result.media[0].url).searchParams.get("anydrop_format")).toBe(
       "2101075653735394v+946537014817549a"
     );
     const audio = new URL(result.media[3].url);
-    expect(audio.searchParams.get("xdrop_format")).toBe("946537014817549a");
-    expect(audio.searchParams.get("xdrop_audio")).toBe("mp3");
+    expect(audio.searchParams.get("anydrop_format")).toBe("946537014817549a");
+    expect(audio.searchParams.get("anydrop_audio")).toBe("mp3");
   });
 
   it("marks hd/sd silent when the video has DASH streams but no audio stream (a real silent reel)", () => {

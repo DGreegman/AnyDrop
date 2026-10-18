@@ -161,9 +161,9 @@ describe("normalizeYtDlpOutput — multi-video, GIFs, and on-demand variants", (
     expect(second.some((v) => v.kind === "merged")).toBe(false); // HLS 720p == http 720p
     const audio = second.find((v) => v.kind === "audio")!;
     const url = new URL(audio.url);
-    expect(url.searchParams.get("xdrop_format")).toBe("hls-audio-128000-Audio");
-    expect(url.searchParams.get("xdrop_item")).toBe("2");
-    expect(url.searchParams.get("xdrop_audio")).toBe("mp3");
+    expect(url.searchParams.get("anydrop_format")).toBe("hls-audio-128000-Audio");
+    expect(url.searchParams.get("anydrop_item")).toBe("2");
+    expect(url.searchParams.get("anydrop_audio")).toBe("mp3");
   });
 
   it("serves an HLS-only video through a merged variant instead of failing", () => {
@@ -174,7 +174,7 @@ describe("normalizeYtDlpOutput — multi-video, GIFs, and on-demand variants", (
     };
     const result = normalizeYtDlpOutput(source, hlsOnly, { canMerge: true });
     expect(result.media[0]).toMatchObject({ kind: "merged", quality: "720p", hasAudio: true });
-    expect(new URL(result.media[0].url).searchParams.get("xdrop_item")).toBeNull();
+    expect(new URL(result.media[0].url).searchParams.get("anydrop_item")).toBeNull();
     // ...and without ffmpeg it's still an honest failure.
     expect(() => normalizeYtDlpOutput(source, hlsOnly, { canMerge: false })).toThrow(AppError);
   });

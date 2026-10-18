@@ -3,7 +3,7 @@ import { AppError } from "./errors";
 import { buildPassthroughResponse, isPassthroughUrl, parsePassthroughUrl } from "./passthrough";
 
 /**
- * Hosts XDrop is willing to fetch media from and stream back to the
+ * Hosts AnyDrop is willing to fetch media from and stream back to the
  * browser, and the Referer each expects — this is the whole SSRF defense
  * for the download endpoint, not a general-purpose URL proxy. Each entry
  * was verified against real resolver output before being added, not
@@ -51,7 +51,7 @@ export function validateMediaUrl(raw: string): URL {
   // Not a direct CDN file URL but a validated post URL + format selector
   // that gets re-resolved through yt-dlp (TikTok, merged qualities, MP3 —
   // see passthrough.ts). Checked narrowly: only the exact canonical shape
-  // XDrop's own resolvers generate, never "any tiktok.com URL".
+  // AnyDrop's own resolvers generate, never "any tiktok.com URL".
   if (isPassthroughUrl(url)) {
     return url;
   }
@@ -82,7 +82,7 @@ export function safeFilename(quality?: string, name?: string, ext: "mp4" | "mp3"
   const base = name ? clean(name).slice(0, 120) : "";
   if (base) return `${base}.${ext}`;
   const q = clean(quality ?? "video");
-  return `xdrop-${q || "video"}.${ext}`;
+  return `anydrop-${q || "video"}.${ext}`;
 }
 
 export type StreamDisposition = "attachment" | "inline";
@@ -128,7 +128,7 @@ export async function buildMediaResponse(
     // matches an allowlisted host before this ever runs.
     const referer = findAllowedHost(target.hostname)?.referer ?? "https://x.com/";
     const headers: Record<string, string> = {
-      "User-Agent": "XDrop/1.0",
+      "User-Agent": "AnyDrop/1.0",
       Referer: referer,
     };
     if (options.range) headers.Range = options.range;

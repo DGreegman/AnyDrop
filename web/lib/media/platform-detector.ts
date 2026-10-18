@@ -26,7 +26,7 @@ export function detectPlatform(url: string): Platform {
   if (!platform) {
     throw new AppError(
       "UNSUPPORTED_URL",
-      "This URL's platform isn't recognized. XDrop supports X, Instagram, TikTok, and Facebook links."
+      "This URL's platform isn't recognized. AnyDrop supports X, Instagram, TikTok, and Facebook links."
     );
   }
 

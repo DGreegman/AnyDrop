@@ -60,7 +60,7 @@ export function classifyResolverFailure(stderr: string): AppError {
 }
 
 /**
- * XDrop only ever calls yt-dlp with a URL already normalized to
+ * AnyDrop only ever calls yt-dlp with a URL already normalized to
  * https://x.com/<user>/status/<id> (see normalizeXUrl) — the handle is
  * right there in the URL, so there's no need to trust/parse yt-dlp's own
  * uploader fields (which the twitter extractor doesn't always populate).
@@ -176,7 +176,7 @@ function normalizeItem(
 
 /**
  * Normalizes yt-dlp's raw --dump-json output — one entry per video in the
- * tweet (up to four) — into XDrop's generic ResolvedMedia shape. Exported
+ * tweet (up to four) — into AnyDrop's generic ResolvedMedia shape. Exported
  * (pure, no I/O) so resolver-response normalization is covered by tests
  * without shelling out to the real yt-dlp binary. `canMerge` defaults to
  * whether ffmpeg is available.
@@ -234,7 +234,7 @@ export class XVideoResolver implements MediaResolver {
 
     // yt-dlp's twitter extractor will follow an embedded link to a video
     // hosted on a *different* site (e.g. a tweet that just links a YouTube
-    // video) and happily resolve that instead. XDrop only resolves video
+    // video) and happily resolve that instead. AnyDrop only resolves video
     // actually hosted on X — drop anything else so we never normalize
     // (and later proxy-download) media from an arbitrary third-party host.
     const ownEntries = entries.filter(

@@ -153,7 +153,7 @@ describe("normalizeYtDlpOutput — merged quality and carousels", () => {
       ["audio", "Audio"],
     ]);
     expect(result.media[0].url).toBe(
-      "https://www.instagram.com/p/DJQJeVQPnI4/?xdrop_format=dash-670913965512136v%2Bdash-1337347094519360a"
+      "https://www.instagram.com/p/DJQJeVQPnI4/?anydrop_format=dash-670913965512136v%2Bdash-1337347094519360a"
     );
     expect(result.id).toBe("DJQJeVQPnI4");
   });
@@ -167,7 +167,7 @@ describe("normalizeYtDlpOutput — merged quality and carousels", () => {
       ],
     };
     const result = normalizeYtDlpOutput("https://www.instagram.com/p/DJQJeVQPnI4/", withH264, { canMerge: true });
-    expect(new URL(result.media[0].url).searchParams.get("xdrop_format")).toBe(
+    expect(new URL(result.media[0].url).searchParams.get("anydrop_format")).toBe(
       "dash-h264v+dash-1337347094519360a"
     );
   });
@@ -197,7 +197,7 @@ describe("classifyResolverFailure", () => {
   it("maps Instagram's login-gated/empty-response message to VIDEO_UNAVAILABLE", () => {
     // Verified against real yt-dlp output for a nonexistent Reel — the
     // same message Instagram returns for content requiring login, which
-    // is exactly why this maps to UNAVAILABLE, not NOT_FOUND: XDrop can't
+    // is exactly why this maps to UNAVAILABLE, not NOT_FOUND: AnyDrop can't
     // tell the two apart without authenticating, and won't.
     const err = classifyResolverFailure(
       "ERROR: [Instagram] ABC123: Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in."

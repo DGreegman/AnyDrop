@@ -37,7 +37,7 @@ const sampleTikTokMedia: ResolvedMedia = {
       width: 720,
       height: 1280,
       format: "mp4",
-      url: "https://www.tiktok.com/@user/video/123?xdrop_format=h264_720p-0",
+      url: "https://www.tiktok.com/@user/video/123?anydrop_format=h264_720p-0",
       hasAudio: true,
     },
   ],

@@ -25,7 +25,7 @@ function resolveFfmpegPath(): string | undefined {
 }
 
 /**
- * ffmpeg is optional. Without it, XDrop serves only media that already
+ * ffmpeg is optional. Without it, AnyDrop serves only media that already
  * exists as one audio+video file (what it always did). With it, yt-dlp
  * can combine separate video-only and audio-only streams on the fly —
  * which is what unlocks the highest qualities on Instagram/Facebook

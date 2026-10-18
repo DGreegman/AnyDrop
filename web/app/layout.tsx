@@ -6,9 +6,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "XDrop",
+  title: "AnyDrop",
   description: "Download videos from public X, Instagram, TikTok and Facebook posts.",
-  appleWebApp: { title: "XDrop", statusBarStyle: "black-translucent" },
+  appleWebApp: { title: "AnyDrop", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

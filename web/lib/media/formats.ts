@@ -18,12 +18,12 @@ export interface YtDlpFormat {
   url?: string;
 }
 
-// Query params XDrop appends to a validated post URL to describe a
+// Query params AnyDrop appends to a validated post URL to describe a
 // download that has to go back through yt-dlp rather than a plain CDN
 // fetch — see passthrough.ts, which is the only thing that reads them.
-export const XDROP_FORMAT_PARAM = "xdrop_format";
-export const XDROP_ITEM_PARAM = "xdrop_item";
-export const XDROP_AUDIO_PARAM = "xdrop_audio";
+export const ANYDROP_FORMAT_PARAM = "anydrop_format";
+export const ANYDROP_ITEM_PARAM = "anydrop_item";
+export const ANYDROP_AUDIO_PARAM = "anydrop_audio";
 
 /**
  * "mp3": convert whatever the source audio is to MP3 with ffmpeg.
@@ -45,9 +45,9 @@ export function buildPassthroughUrl(
   options: { item?: number; audio?: AudioMode } = {}
 ): string {
   const url = new URL(pageUrl);
-  url.searchParams.set(XDROP_FORMAT_PARAM, formatSpec);
-  if (options.item !== undefined) url.searchParams.set(XDROP_ITEM_PARAM, String(options.item));
-  if (options.audio) url.searchParams.set(XDROP_AUDIO_PARAM, options.audio);
+  url.searchParams.set(ANYDROP_FORMAT_PARAM, formatSpec);
+  if (options.item !== undefined) url.searchParams.set(ANYDROP_ITEM_PARAM, String(options.item));
+  if (options.audio) url.searchParams.set(ANYDROP_AUDIO_PARAM, options.audio);
   return url.toString();
 }
 

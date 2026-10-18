@@ -13,7 +13,7 @@ const mediaService = new MediaService();
 /**
  * Legacy X-only shape this endpoint returned before the media-platform
  * generalization (see lib/media/). Kept identical so external consumers
- * of the old contract don't need to change (XDrop's own frontend uses
+ * of the old contract don't need to change (AnyDrop's own frontend uses
  * /api/media/resolve): this is the same MediaService, MEDIA -> VIDEO
  * renamed on the way out. Only the first video of a multi-video post is
  * included — the old shape has no way to express more.

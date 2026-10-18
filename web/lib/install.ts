@@ -1,4 +1,4 @@
-// Client-side "install XDrop" helpers — pure functions plus tiny
+// Client-side "install AnyDrop" helpers — pure functions plus tiny
 // localStorage wrappers, so InstallPrompt.tsx stays mostly UI.
 //
 // Why this exists at all: the browser's own install prompt
@@ -6,7 +6,7 @@
 //   - Safari (iPhone/iPad/Mac) and Firefox never fire it.
 //   - Chrome stops firing it for a long time once someone dismisses it,
 //     and each event can only be used once.
-// So XDrop always offers an install button and falls back to telling
+// So AnyDrop always offers an install button and falls back to telling
 // people where their browser keeps its own "install" menu item.
 
 export type InstallEnvironment =
@@ -37,9 +37,9 @@ export function installInstructions(env: InstallEnvironment): string {
     case "mac-safari":
       return "In the menu bar, choose File → “Add to Dock”.";
     case "desktop-chromium":
-      return "Click the install icon at the right end of the address bar, or choose “Install XDrop” from the browser menu.";
+      return "Click the install icon at the right end of the address bar, or choose “Install AnyDrop” from the browser menu.";
     case "unsupported":
-      return "This browser can't install apps. Open XDrop in Chrome, Edge or Safari to install it.";
+      return "This browser can't install apps. Open AnyDrop in Chrome, Edge or Safari to install it.";
   }
 }
 
@@ -47,8 +47,8 @@ export function installInstructions(env: InstallEnvironment): string {
 // dismissed it once should still get a second chance later.
 export const DISMISS_FOR_MS = 7 * 24 * 60 * 60 * 1000;
 
-const DISMISSED_KEY = "xdrop:install-dismissed-at";
-const INSTALLED_KEY = "xdrop:installed";
+const DISMISSED_KEY = "anydrop:install-dismissed-at";
+const INSTALLED_KEY = "anydrop:installed";
 
 export function isDismissed(dismissedAt: number | null, now = Date.now()): boolean {
   return dismissedAt !== null && now - dismissedAt < DISMISS_FOR_MS;

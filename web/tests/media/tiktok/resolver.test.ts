@@ -76,7 +76,7 @@ describe("normalizeYtDlpOutput", () => {
     });
     // Not the raw CDN URL — a passthrough to the source page + format id.
     expect(result.media[0].url).toBe(
-      "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=bytevc1_720p_650528-0"
+      "https://www.tiktok.com/@natgeo/video/7595589117723954487?anydrop_format=bytevc1_720p_650528-0"
     );
 
     expect(result.media[1]).toMatchObject({ quality: "1024p", width: 576, height: 1024 });
@@ -100,7 +100,7 @@ describe("normalizeYtDlpOutput", () => {
     expect(audio).toHaveLength(1);
     expect(audio[0]).toMatchObject({ format: "mp3", hasAudio: true });
     expect(audio[0].url).toBe(
-      "https://www.tiktok.com/@natgeo/video/7595589117723954487?xdrop_format=audio&xdrop_audio=copy"
+      "https://www.tiktok.com/@natgeo/video/7595589117723954487?anydrop_format=audio&anydrop_audio=copy"
     );
     // The audio variant sorts after every video variant.
     expect(result.media[result.media.length - 1].kind).toBe("audio");

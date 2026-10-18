@@ -2,10 +2,10 @@ import { parseYtDlpJsonLines, runYtDlp, ytDlpStandalonePath } from "../yt-dlp";
 import { normalizeTikTokUrl, tiktokVideoId } from "./validator";
 import { AppError } from "../errors";
 import { MediaAuthor, MediaResolver, MediaVariant, ResolvedMedia } from "../types";
-import { XDROP_FORMAT_PARAM, YtDlpFormat, buildPassthroughUrl, maxHeight, onDemandVariants } from "../formats";
+import { ANYDROP_FORMAT_PARAM, YtDlpFormat, buildPassthroughUrl, maxHeight, onDemandVariants } from "../formats";
 import { assembleResolvedMedia, pickTitle, roundDuration } from "../assemble";
 
-export { XDROP_FORMAT_PARAM };
+export { ANYDROP_FORMAT_PARAM };
 export type { YtDlpFormat };
 
 export interface YtDlpOutput {
@@ -60,7 +60,7 @@ export function classifyResolverFailure(stderr: string): AppError {
 
 /**
  * Normalizes yt-dlp's raw --dump-json output for a TikTok video into
- * XDrop's generic ResolvedMedia shape.
+ * AnyDrop's generic ResolvedMedia shape.
  *
  * Unlike Instagram, TikTok's progressive formats DO carry real
  * width/height/bitrate (verified against several real videos) — each
@@ -75,7 +75,7 @@ export function classifyResolverFailure(stderr: string): AppError {
  * empirically (bare curl, and a full real-browser navigation, both 403
  * even with the correct Referer/UA; only succeeded when yt-dlp handled
  * the whole request itself). Instead, `url` is the *source* TikTok page
- * URL with a `xdrop_format` query param carrying the exact format_id to
+ * URL with a `anydrop_format` query param carrying the exact format_id to
  * request — lib/media/tiktok/download.ts recognizes this shape and
  * re-invokes yt-dlp at download time rather than proxying a dead link
  * (see passthrough.ts).

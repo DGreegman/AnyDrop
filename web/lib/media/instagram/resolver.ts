@@ -33,7 +33,7 @@ export function classifyResolverFailure(stderr: string): AppError {
   const lower = stderr.toLowerCase();
 
   // yt-dlp can't distinguish "doesn't exist" from "exists but requires
-  // login" for Instagram — both produce this same message. Since XDrop
+  // login" for Instagram — both produce this same message. Since AnyDrop
   // never authenticates (see resolve() below), treat it as "not publicly
   // accessible" rather than guessing which one it actually is. Same
   // treatment for audience-restricted content (age/sensitive-content
@@ -156,7 +156,7 @@ function normalizeItem(
 
 /**
  * Normalizes yt-dlp's raw --dump-json output — one entry per video, so a
- * carousel post yields several — into XDrop's generic ResolvedMedia
+ * carousel post yields several — into AnyDrop's generic ResolvedMedia
  * shape. Exported (pure, no I/O) for tests; `canMerge` defaults to
  * whether ffmpeg is available.
  */
@@ -203,7 +203,7 @@ async function resolveShareLink(url: string): Promise<string> {
     try {
       res = await fetch(current, {
         redirect: "manual",
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; XDrop/1.0)" },
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; AnyDrop/1.0)" },
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {

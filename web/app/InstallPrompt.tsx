@@ -116,7 +116,7 @@ export default function InstallPrompt() {
     return (
       <div className="install">
         <p className="install-note">
-          XDrop is installed on this device — open it from your home screen, or share a video to it.
+          AnyDrop is installed on this device — open it from your home screen, or share a video to it.
           <button type="button" className="install-dismiss" onClick={handleDismiss} aria-label="Hide this message">
             ×
           </button>
@@ -129,7 +129,7 @@ export default function InstallPrompt() {
     <div className="install">
       <div className="install-row">
         <button type="button" className="install-btn" onClick={handleInstall} aria-expanded={deferred ? undefined : showHelp}>
-          Install app — then share videos to XDrop
+          Install app — then share videos to AnyDrop
         </button>
         <button type="button" className="install-dismiss" onClick={handleDismiss}>
           Not now
